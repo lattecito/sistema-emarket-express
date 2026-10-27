@@ -1,0 +1,20 @@
+# Archivos y carpetas generados por Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Entornos virtuales
+venv/
+.venv/
+env/
+ENV/
+
+# Carpetas de editores o IDEs
+.vscode/
+.idea/
+
+# Archivos de respaldo y temporales
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
