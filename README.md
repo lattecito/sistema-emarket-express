@@ -1,4 +1,4 @@
-# Sistema Integral E-Market Express 🛒📦
+# Sistema Integral E-Market Express
 
 Sistema de gestión comercial, inventario en bodegas y facturación transaccional desarrollado en **Python (Tkinter)** conectado a una base de datos **MariaDB / MySQL (XAMPP)**.
 
@@ -6,7 +6,7 @@ Proyecto académico para el curso de **Bases de Datos** - Universidad de los Lla
 
 ---
 
-## 📋 Características Principales
+##  Características Principales
 
 - **Conexión Centralizada:** Manejo de sesiones y transacciones con `mysql-connector-python`.
 - **Autenticación por Roles en MariaDB:**
@@ -24,7 +24,7 @@ Proyecto académico para el curso de **Bases de Datos** - Universidad de los Lla
 
 ---
 
-## 🗂️ Estructura del Proyecto
+##  Estructura del Proyecto
 
 ```text
 ├── conexion.py          # Conexión centralizada a MariaDB y manejo de sesión
@@ -41,7 +41,7 @@ Proyecto académico para el curso de **Bases de Datos** - Universidad de los Lla
 
 ---
 
-## 🚀 Requisitos e Instalación
+##  Requisitos e Instalación
 
 ### 1. Requisitos Previos
 - **Python 3.10 o superior**.
@@ -62,7 +62,7 @@ pip install -r requirements.txt
 
 ---
 
-## ▶️ Ejecución del Sistema
+##  Ejecución del Sistema
 
 Para iniciar la aplicación:
 
