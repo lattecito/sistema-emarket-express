@@ -10,6 +10,7 @@ Requerimiento especial:
   vista_pedidos_resumen
 - Controla transacciones y captura errores de validación de stock generados por
   el procedimiento y por el trigger 'trg_validar_stock_pedido'.
+- Gestión logística de estados de pedido ('pendiente', 'enviado', 'entregado').
 """
 
 import tkinter as tk
@@ -21,6 +22,7 @@ from mysql.connector import Error
 from conexion import consultar, ejecutar, obtener_conexion, cerrar_conexion, traducir_error
 
 METODOS_PAGO = ("Tarjeta", "PSE", "Efectivo")
+ESTADOS_PEDIDO = ("pendiente", "enviado", "entregado")
 
 
 def formato_dinero(valor):
@@ -175,9 +177,33 @@ def crear_modulo_pedidos(padre):
         seccion_historial,
         ("N° Pedido", "Fecha", "Cliente", "Total", "Estado", "Método Pago", "Estado Pago"),
         (75, 90, 140, 100, 85, 95, 95),
-        alto=18
+        alto=15
     )
     marco_historial.pack(fill="both", expand=True)
+
+    # 5. Gestión logística de estados
+    marco_estado = ttk.LabelFrame(seccion_historial, text="Gestión Logística de Estados", padding=8)
+    marco_estado.pack(fill="x", pady=(8, 0))
+
+    ttk.Label(marco_estado, text="Estado:").pack(side="left", padx=(0, 5))
+    cmb_estado_pedido = ttk.Combobox(
+        marco_estado,
+        state="readonly",
+        values=ESTADOS_PEDIDO,
+        width=14
+    )
+    cmb_estado_pedido.pack(side="left", padx=5)
+    cmb_estado_pedido.current(0)
+
+    btn_actualizar_estado = ttk.Button(
+        marco_estado,
+        text="Actualizar Estado del Pedido",
+        command=lambda: actualizar_estado_pedido()
+    )
+    btn_actualizar_estado.pack(side="left", padx=5)
+
+    lbl_pedido_sel = ttk.Label(marco_estado, text="Seleccione un pedido", foreground="#5a6b7d")
+    lbl_pedido_sel.pack(side="right", padx=5)
 
     barra_historial = ttk.Frame(seccion_historial)
     barra_historial.pack(fill="x", pady=(8, 0))
@@ -214,6 +240,57 @@ def crear_modulo_pedidos(padre):
             LIMIT 50
         """
         llenar_tabla(tabla_historial, consultar(sql))
+        al_seleccionar_pedido()
+
+    def al_seleccionar_pedido(event=None):
+        """Carga el estado del pedido seleccionado en el Combobox de gestión logística."""
+        seleccion = tabla_historial.selection()
+        if not seleccion:
+            lbl_pedido_sel.configure(text="Seleccione un pedido para modificar su estado")
+            return
+        id_pedido = seleccion[0]
+        item = tabla_historial.item(id_pedido)
+        valores = item.get("values", [])
+        lbl_pedido_sel.configure(text=f"Pedido N° {id_pedido} seleccionado")
+        if valores and len(valores) > 4:
+            estado_actual = str(valores[4]).strip().lower()
+            if estado_actual in ESTADOS_PEDIDO:
+                cmb_estado_pedido.set(estado_actual)
+            else:
+                for est in ESTADOS_PEDIDO:
+                    if est.lower() == estado_actual:
+                        cmb_estado_pedido.set(est)
+                        break
+
+    def actualizar_estado_pedido():
+        """Actualiza el estado logístico del pedido seleccionado en la base de datos."""
+        seleccion = tabla_historial.selection()
+        if not seleccion:
+            messagebox.showwarning("Selección requerida", "Por favor seleccione un pedido de la tabla.")
+            return
+
+        id_pedido = seleccion[0]
+        nuevo_estado = cmb_estado_pedido.get().strip()
+
+        if not nuevo_estado:
+            messagebox.showwarning("Estado requerido", "Seleccione un estado para el pedido.")
+            return
+
+        filas = ejecutar(
+            "UPDATE pedido SET estado_pedido = %s WHERE id_pedido = %s;",
+            (nuevo_estado, id_pedido)
+        )
+
+        if filas is not None:
+            messagebox.showinfo(
+                "Estado Actualizado",
+                f"El estado del pedido N° {id_pedido} ha sido actualizado a '{nuevo_estado}' con éxito."
+            )
+            cargar_historial_desde_vista()
+            if tabla_historial.exists(str(id_pedido)):
+                tabla_historial.selection_set(str(id_pedido))
+                tabla_historial.focus(str(id_pedido))
+                al_seleccionar_pedido()
 
     def refrescar_carrito():
         tabla_carrito.delete(*tabla_carrito.get_children())
@@ -322,6 +399,9 @@ def crear_modulo_pedidos(padre):
 
     ttk.Button(barra_historial, text="Recargar Historial (vista_pedidos_resumen)",
                command=cargar_historial_desde_vista).pack(side="right")
+
+    # Eventos de tabla
+    tabla_historial.bind("<<TreeviewSelect>>", al_seleccionar_pedido)
 
     # Carga inicial
     cargar_listas()
