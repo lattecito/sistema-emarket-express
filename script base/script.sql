@@ -300,20 +300,24 @@ BEGIN
     END IF;
 END //
 
--- Procedimiento 2: Registro atómico de Pedido Completo (Cabecera, Detalle, Stock y Pago)
+-- Procedimiento 2: Registro atómico de Pedido Completo (Cabecera, Detalle, Stock y Factura única)
 DROP PROCEDURE IF EXISTS SP_RegistrarPedidoCompleto //
 CREATE PROCEDURE SP_RegistrarPedidoCompleto(
     IN p_id_usuario INT,
-    IN p_codigo_producto INT,
-    IN p_cantidad INT,
+    IN p_carrito_json LONGTEXT,
     IN p_metodo_pago VARCHAR(20)
 )
 BEGIN
-    DECLARE v_precio DECIMAL(10,2);
-    DECLARE v_total DECIMAL(10,2);
+    DECLARE v_total DECIMAL(10,2) DEFAULT 0;
     DECLARE v_nuevo_pedido_id INT;
+    DECLARE v_num_items INT DEFAULT 0;
+    DECLARE i INT DEFAULT 0;
+    DECLARE v_codigo INT;
+    DECLARE v_cantidad INT;
+    DECLARE v_precio DECIMAL(10,2);
     DECLARE v_stock INT;
-    
+    DECLARE v_next_trans_id INT;
+
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
         ROLLBACK;
@@ -321,37 +325,76 @@ BEGIN
     END;
 
     START TRANSACTION;
-    
-    -- Validar precio y stock
-    SELECT precio_unitario, cantidad_disponible INTO v_precio, v_stock 
-    FROM productos 
-    WHERE codigo = p_codigo_producto FOR UPDATE;
-    
-    IF v_stock < p_cantidad THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Error: No hay existencias suficientes.';
+
+    IF JSON_VALID(p_carrito_json) = 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Error: Formato JSON de productos inválido.';
     END IF;
-    
-    SET v_total = v_precio * p_cantidad;
-    
-    -- Insertar Cabecera
+
+    SET v_num_items = JSON_LENGTH(p_carrito_json);
+    IF v_num_items <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Error: El carrito está vacío.';
+    END IF;
+
+    -- 1. Validar existencias y acumular total de la compra
+    WHILE i < v_num_items DO
+        SET v_codigo = CAST(JSON_UNQUOTE(JSON_EXTRACT(p_carrito_json, CONCAT('$[', i, '].codigo'))) AS UNSIGNED);
+        SET v_cantidad = CAST(JSON_UNQUOTE(JSON_EXTRACT(p_carrito_json, CONCAT('$[', i, '].cantidad'))) AS SIGNED);
+
+        IF v_cantidad <= 0 THEN
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Error: La cantidad de cada producto debe ser mayor a cero.';
+        END IF;
+
+        SET v_precio = NULL;
+        SET v_stock = NULL;
+
+        SELECT precio_unitario, cantidad_disponible 
+        INTO v_precio, v_stock 
+        FROM productos 
+        WHERE codigo = v_codigo 
+        FOR UPDATE;
+
+        IF v_precio IS NULL THEN
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Error: Uno de los productos no existe en la base de datos.';
+        END IF;
+
+        IF v_stock < v_cantidad THEN
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Error: Existencias insuficientes para uno de los productos.';
+        END IF;
+
+        SET v_total = v_total + (v_precio * v_cantidad);
+        SET i = i + 1;
+    END WHILE;
+
+    -- 2. Insertar UNA ÚNICA Cabecera de Pedido para toda la compra
     INSERT INTO pedido (fecha_transaccion, usuario_pedido, total, estado_pedido)
     VALUES (CURDATE(), p_id_usuario, v_total, 'pendiente');
-    
+
     SET v_nuevo_pedido_id = LAST_INSERT_ID();
-    
-    -- Insertar Detalle en Transacción
-    INSERT INTO transaccion (id_transaccion, cantidad_vendida, precio_unitario_real, pedido_transaccion, producto_transaccion)
-    VALUES (FLOOR(RAND() * 899999 + 100000), p_cantidad, v_precio, v_nuevo_pedido_id, p_codigo_producto);
-    
-    -- Descontar del inventario general de productos
-    UPDATE productos 
-    SET cantidad_disponible = cantidad_disponible - p_cantidad 
-    WHERE codigo = p_codigo_producto;
-    
-    -- Registrar Factura de Pago
+
+    -- 3. Insertar cada producto como ítem de detalle en transaccion y descontar inventario
+    SET i = 0;
+    WHILE i < v_num_items DO
+        SET v_codigo = CAST(JSON_UNQUOTE(JSON_EXTRACT(p_carrito_json, CONCAT('$[', i, '].codigo'))) AS UNSIGNED);
+        SET v_cantidad = CAST(JSON_UNQUOTE(JSON_EXTRACT(p_carrito_json, CONCAT('$[', i, '].cantidad'))) AS SIGNED);
+
+        SELECT precio_unitario INTO v_precio FROM productos WHERE codigo = v_codigo;
+
+        SELECT IFNULL(MAX(id_transaccion), 100) + 1 INTO v_next_trans_id FROM transaccion;
+
+        INSERT INTO transaccion (id_transaccion, cantidad_vendida, precio_unitario_real, pedido_transaccion, producto_transaccion)
+        VALUES (v_next_trans_id, v_cantidad, v_precio, v_nuevo_pedido_id, v_codigo);
+
+        UPDATE productos 
+        SET cantidad_disponible = cantidad_disponible - v_cantidad 
+        WHERE codigo = v_codigo;
+
+        SET i = i + 1;
+    END WHILE;
+
+    -- 4. Registrar UNA ÚNICA Factura de Pago para toda la compra
     INSERT INTO factura_pago (id_pedido, metodo_pago, fecha_pago, valor_pagado, estado_pago)
     VALUES (v_nuevo_pedido_id, p_metodo_pago, NOW(), v_total, 'Aprobado');
-    
+
     COMMIT;
 END //
 
@@ -401,6 +444,7 @@ GRANT SELECT ON parcial.* TO 'Cajero_App';
 GRANT INSERT, UPDATE ON parcial.pedido TO 'Cajero_App';
 GRANT INSERT ON parcial.transaccion TO 'Cajero_App';
 GRANT INSERT ON parcial.factura_pago TO 'Cajero_App';
+GRANT UPDATE ON parcial.productos TO 'Cajero_App';
 GRANT EXECUTE ON PROCEDURE parcial.SP_RegistrarPedidoCompleto TO 'Cajero_App';
 
 -- 6.3 Creación de usuarios de conexión

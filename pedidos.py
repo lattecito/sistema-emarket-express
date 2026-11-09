@@ -4,8 +4,9 @@ pedidos.py
 Módulo TRANSACCIONAL de Pedidos y Pagos.
 
 Requerimiento especial:
-- Procesa las compras llamando directamente al procedimiento almacenado:
-  SP_RegistrarPedidoCompleto(p_id_usuario, p_codigo_producto, p_cantidad, p_metodo_pago)
+- Procesa las compras llamando al procedimiento almacenado transaccional:
+  SP_RegistrarPedidoCompleto(p_id_usuario, p_carrito_json, p_metodo_pago)
+  garantizando exactamente 1 pedido y 1 factura para compras con 1 o más productos.
 - Consulta el historial de pedidos directamente desde la vista analítica:
   vista_pedidos_resumen
 - Controla transacciones y captura errores de validación de stock generados por
@@ -13,6 +14,7 @@ Requerimiento especial:
 - Gestión logística de estados de pedido ('pendiente', 'enviado', 'entregado').
 """
 
+import json
 import tkinter as tk
 from tkinter import ttk, messagebox
 from decimal import Decimal
@@ -68,18 +70,106 @@ def llenar_tabla(tabla, filas, usar_primera_columna_como_id=True):
             tabla.insert("", "end", values=valores)
 
 
+def procesar_pedido_transaccional_directo(conexion, id_usuario, carrito, metodo_pago):
+    """
+    Registra atómicamente la compra con SQL directo en caso de que el procedimiento
+    almacenado en la base de datos aún no haya sido actualizado a la versión JSON.
+
+    Garantiza:
+    - 1 único registro en 'pedido' por el total acumulado de todos los artículos.
+    - N registros de detalle en 'transaccion' (uno por cada producto del carrito).
+    - Descuento de stock en 'productos' respetando el trigger de validación.
+    - 1 única factura en 'factura_pago' para toda la compra.
+    """
+    cursor = None
+    try:
+        cursor = conexion.cursor()
+
+        # 1. Validar existencias de todos los productos y calcular el total de la compra
+        total = Decimal("0.00")
+        items_validados = []
+        for item in carrito:
+            codigo = int(item["codigo"])
+            cantidad = int(item["cantidad"])
+            cursor.execute(
+                "SELECT precio_unitario, cantidad_disponible, nombre FROM productos WHERE codigo = %s FOR UPDATE;",
+                (codigo,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                raise Error(msg=f"El producto con código {codigo} no existe.")
+            precio, stock, nombre = row
+            if stock < cantidad:
+                raise Error(msg=f"Stock insuficiente para '{nombre}'. Disponibles: {stock}, solicitados: {cantidad}.")
+            subtotal = Decimal(str(precio)) * cantidad
+            total += subtotal
+            items_validados.append({
+                "codigo": codigo,
+                "cantidad": cantidad,
+                "precio": precio
+            })
+
+        # 2. Insertar UNA ÚNICA cabecera de pedido para toda la compra
+        cursor.execute(
+            "INSERT INTO pedido (fecha_transaccion, usuario_pedido, total, estado_pedido) VALUES (CURDATE(), %s, %s, 'pendiente');",
+            (id_usuario, int(total))
+        )
+        id_pedido = cursor.lastrowid
+
+        # 3. Insertar cada producto como detalle en transaccion y descontar del inventario
+        for item in items_validados:
+            cursor.execute("SELECT IFNULL(MAX(id_transaccion), 100) + 1 FROM transaccion;")
+            next_trans_id = cursor.fetchone()[0]
+
+            cursor.execute(
+                "INSERT INTO transaccion (id_transaccion, cantidad_vendida, precio_unitario_real, pedido_transaccion, producto_transaccion) "
+                "VALUES (%s, %s, %s, %s, %s);",
+                (next_trans_id, item["cantidad"], item["precio"], id_pedido, item["codigo"])
+            )
+
+            cursor.execute(
+                "UPDATE productos SET cantidad_disponible = cantidad_disponible - %s WHERE codigo = %s;",
+                (item["cantidad"], item["codigo"])
+            )
+
+        # 4. Insertar UNA ÚNICA factura de pago para toda la compra
+        cursor.execute(
+            "INSERT INTO factura_pago (id_pedido, metodo_pago, fecha_pago, valor_pagado, estado_pago) "
+            "VALUES (%s, %s, NOW(), %s, 'Aprobado');",
+            (id_pedido, metodo_pago, total)
+        )
+
+        conexion.commit()
+        return True
+
+    except Error as e:
+        conexion.rollback()
+        mensaje = traducir_error(e)
+        messagebox.showerror(
+            "Error al procesar pedido",
+            "La transacción fue revertida en MariaDB (ROLLBACK).\n\n"
+            f"Causa: {mensaje}"
+        )
+        return False
+    finally:
+        if cursor is not None:
+            try:
+                cursor.close()
+            except:
+                pass
+
+
 def procesar_pedido_con_sp(id_usuario, carrito, metodo_pago):
     """
-    Invoca el procedimiento almacenado SP_RegistrarPedidoCompleto para cada
-    producto del pedido.
-    
-    Firma del procedimiento en MariaDB:
-        SP_RegistrarPedidoCompleto(
-            IN p_id_usuario INT,
-            IN p_codigo_producto INT,
-            IN p_cantidad INT,
-            IN p_metodo_pago VARCHAR(20)
-        )
+    Procesa la venta completa de manera atómica generando:
+    - 1 solo registro de pedido (pedido) por el total acumulado de todos los artículos.
+    - N detalles de compra (transaccion), uno por cada producto del carrito.
+    - 1 sola factura de pago (factura_pago) asociada al pedido.
+
+    Invoca el procedimiento almacenado transaccional:
+        SP_RegistrarPedidoCompleto(IN p_id_usuario INT, IN p_carrito_json LONGTEXT, IN p_metodo_pago VARCHAR(20))
+    Si la base de datos aún tiene la versión previa de 4 argumentos, delega a la transacción
+    directa sin fragmentar la compra en múltiples pedidos ni facturas.
     """
     conexion = obtener_conexion()
     if conexion is None:
@@ -89,15 +179,28 @@ def procesar_pedido_con_sp(id_usuario, carrito, metodo_pago):
     try:
         cursor = conexion.cursor()
 
-        # Invocamos el SP por cada artículo del pedido
-        for item in carrito:
+        # Empaquetamos todos los artículos del carrito en una estructura JSON
+        carrito_json = json.dumps([
+            {"codigo": int(item["codigo"]), "cantidad": int(item["cantidad"])}
+            for item in carrito
+        ])
+
+        try:
+            # Invocamos el SP una única vez para toda la compra
             cursor.callproc(
                 "SP_RegistrarPedidoCompleto",
-                (id_usuario, item["codigo"], item["cantidad"], metodo_pago)
+                (id_usuario, carrito_json, metodo_pago)
             )
+            conexion.commit()
+            return True
 
-        conexion.commit()
-        return True
+        except Error as e_sp:
+            # 1318: Número incorrecto de argumentos (si la BD aún tiene la versión previa de 4 argumentos)
+            if getattr(e_sp, "errno", None) in (1318, 1406, 1265) or "expected 4" in str(e_sp).lower():
+                conexion.rollback()
+                return procesar_pedido_transaccional_directo(conexion, id_usuario, carrito, metodo_pago)
+            else:
+                raise e_sp
 
     except Error as e:
         conexion.rollback()
