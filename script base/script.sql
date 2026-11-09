@@ -398,6 +398,137 @@ BEGIN
     COMMIT;
 END //
 
+-- Procedimiento 3: Modificación atómica de Pedido Existente y actualización de su Factura
+DROP PROCEDURE IF EXISTS SP_ModificarPedidoExistente //
+CREATE PROCEDURE SP_ModificarPedidoExistente(
+    IN p_id_pedido INT,
+    IN p_id_usuario INT,
+    IN p_carrito_json LONGTEXT,
+    IN p_metodo_pago VARCHAR(20)
+)
+BEGIN
+    DECLARE v_total DECIMAL(10,2) DEFAULT 0;
+    DECLARE v_num_items INT DEFAULT 0;
+    DECLARE i INT DEFAULT 0;
+    DECLARE v_codigo INT;
+    DECLARE v_cantidad INT;
+    DECLARE v_precio DECIMAL(10,2);
+    DECLARE v_stock INT;
+    DECLARE v_next_trans_id INT;
+    DECLARE v_existe_pedido INT DEFAULT 0;
+
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    START TRANSACTION;
+
+    SELECT COUNT(*) INTO v_existe_pedido FROM pedido WHERE id_pedido = p_id_pedido;
+    IF v_existe_pedido = 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Error: El pedido especificado no existe.';
+    END IF;
+
+    IF JSON_VALID(p_carrito_json) = 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Error: Formato JSON de productos inválido.';
+    END IF;
+
+    SET v_num_items = JSON_LENGTH(p_carrito_json);
+    IF v_num_items <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Error: El pedido modificado debe tener al menos un producto.';
+    END IF;
+
+    -- 1. Reintegrar al inventario los artículos previos del pedido
+    CREATE TEMPORARY TABLE IF NOT EXISTS temp_reintegrar_stock (
+        id_prod INT,
+        cant INT
+    );
+    TRUNCATE TABLE temp_reintegrar_stock;
+
+    INSERT INTO temp_reintegrar_stock (id_prod, cant)
+    SELECT producto_transaccion, cantidad_vendida 
+    FROM transaccion 
+    WHERE pedido_transaccion = p_id_pedido;
+
+    UPDATE productos p
+    INNER JOIN temp_reintegrar_stock t ON p.codigo = t.id_prod
+    SET p.cantidad_disponible = p.cantidad_disponible + t.cant;
+
+    DROP TEMPORARY TABLE IF EXISTS temp_reintegrar_stock;
+
+    -- 2. Validar existencias con los nuevos artículos y calcular el nuevo total
+    SET i = 0;
+    WHILE i < v_num_items DO
+        SET v_codigo = CAST(JSON_UNQUOTE(JSON_EXTRACT(p_carrito_json, CONCAT('$[', i, '].codigo'))) AS UNSIGNED);
+        SET v_cantidad = CAST(JSON_UNQUOTE(JSON_EXTRACT(p_carrito_json, CONCAT('$[', i, '].cantidad'))) AS SIGNED);
+
+        IF v_cantidad <= 0 THEN
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Error: La cantidad de cada producto debe ser mayor a cero.';
+        END IF;
+
+        SET v_precio = NULL;
+        SET v_stock = NULL;
+
+        SELECT precio_unitario, cantidad_disponible 
+        INTO v_precio, v_stock 
+        FROM productos 
+        WHERE codigo = v_codigo 
+        FOR UPDATE;
+
+        IF v_precio IS NULL THEN
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Error: Uno de los productos no existe en la base de datos.';
+        END IF;
+
+        IF v_stock < v_cantidad THEN
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Error: Existencias insuficientes para uno de los productos al actualizar.';
+        END IF;
+
+        SET v_total = v_total + (v_precio * v_cantidad);
+        SET i = i + 1;
+    END WHILE;
+
+    -- 3. Eliminar los detalles anteriores en transaccion
+    DELETE FROM transaccion WHERE pedido_transaccion = p_id_pedido;
+
+    -- 4. Insertar los nuevos detalles y descontar el inventario actualizado
+    SET i = 0;
+    WHILE i < v_num_items DO
+        SET v_codigo = CAST(JSON_UNQUOTE(JSON_EXTRACT(p_carrito_json, CONCAT('$[', i, '].codigo'))) AS UNSIGNED);
+        SET v_cantidad = CAST(JSON_UNQUOTE(JSON_EXTRACT(p_carrito_json, CONCAT('$[', i, '].cantidad'))) AS SIGNED);
+
+        SELECT precio_unitario INTO v_precio FROM productos WHERE codigo = v_codigo;
+
+        SELECT IFNULL(MAX(id_transaccion), 100) + 1 INTO v_next_trans_id FROM transaccion;
+
+        INSERT INTO transaccion (id_transaccion, cantidad_vendida, precio_unitario_real, pedido_transaccion, producto_transaccion)
+        VALUES (v_next_trans_id, v_cantidad, v_precio, p_id_pedido, v_codigo);
+
+        UPDATE productos 
+        SET cantidad_disponible = cantidad_disponible - v_cantidad 
+        WHERE codigo = v_codigo;
+
+        SET i = i + 1;
+    END WHILE;
+
+    -- 5. Actualizar la cabecera del pedido (total y cliente si cambió)
+    UPDATE pedido 
+    SET total = v_total, usuario_pedido = p_id_usuario 
+    WHERE id_pedido = p_id_pedido;
+
+    -- 6. Actualizar la factura existente asociada al pedido
+    UPDATE factura_pago 
+    SET valor_pagado = v_total, metodo_pago = p_metodo_pago, fecha_pago = NOW()
+    WHERE id_pedido = p_id_pedido;
+
+    IF ROW_COUNT() = 0 THEN
+        INSERT INTO factura_pago (id_pedido, metodo_pago, fecha_pago, valor_pagado, estado_pago)
+        VALUES (p_id_pedido, p_metodo_pago, NOW(), v_total, 'Aprobado');
+    END IF;
+
+    COMMIT;
+END //
+
 DELIMITER ;
 
 
@@ -442,10 +573,11 @@ GRANT ALL PRIVILEGES ON parcial.* TO 'Administrador_DB';
 
 GRANT SELECT ON parcial.* TO 'Cajero_App';
 GRANT INSERT, UPDATE ON parcial.pedido TO 'Cajero_App';
-GRANT INSERT ON parcial.transaccion TO 'Cajero_App';
-GRANT INSERT ON parcial.factura_pago TO 'Cajero_App';
+GRANT INSERT, DELETE ON parcial.transaccion TO 'Cajero_App';
+GRANT INSERT, UPDATE ON parcial.factura_pago TO 'Cajero_App';
 GRANT UPDATE ON parcial.productos TO 'Cajero_App';
 GRANT EXECUTE ON PROCEDURE parcial.SP_RegistrarPedidoCompleto TO 'Cajero_App';
+GRANT EXECUTE ON PROCEDURE parcial.SP_ModificarPedidoExistente TO 'Cajero_App';
 
 -- 6.3 Creación de usuarios de conexión
 CREATE USER IF NOT EXISTS 'admin_db'@'localhost' IDENTIFIED BY 'Admin2026*Seguro';

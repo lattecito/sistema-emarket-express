@@ -13,8 +13,11 @@ Proyecto académico para el curso de **Bases de Datos** - Universidad de los Lla
   - `admin_db` (Rol **Administrador**): Acceso total al catálogo CRUD, transacciones, inventarios y reportes gerenciales.
   - `cajero_app` (Rol **Cajero**): Acceso a transacciones de pedidos y consulta de catálogo en modo solo lectura.
 - **Transaccionalidad y Procedimientos Almacenados:**
-  - `SP_RegistrarPedidoCompleto`: Inserción atómica de cabecera de pedido, detalle de transacción, descuento de stock y emisión de factura.
+  - `SP_RegistrarPedidoCompleto`: Inserción atómica de cabecera de pedido, detalle de transacción, descuento de stock y emisión de factura única por compra.
+  - `SP_ModificarPedidoExistente`: Modificación atómica de pedidos existentes, reajuste de inventario y actualización automática de la factura de pago.
   - `SP_ActualizarInventarioBodega`: Transferencia atómica de existencias entre bodegas.
+- **Facturación y Desglose de Productos:**
+  - Consulta interactiva de factura electrónica con desglose ítem por ítem para cada pedido.
 - **Triggers (Disparadores de Base de Datos):**
   - `trg_auditoria_precio_articulo`: Registra cambios de precio de productos automáticamente en `auditoria_precio_articulo`.
   - `trg_validar_stock_pedido`: Valida existencias antes de registrar transacciones.
