@@ -14,6 +14,7 @@ Flujo de la aplicación:
        * Módulo de Catálogo y Bodegas (CRUD completo).
        * Módulo de Pedidos y Pagos (Ventas transaccionales).
        * Módulo de Reportes Gerenciales y Gráficos estadísticos con matplotlib.
+       * Módulo de Gestión de Cajeros (Creación y revocación de cuentas en MariaDB).
    - Cajero / Operador:
        * Consulta de Catálogo (modo solo lectura para ver precios y existencias).
        * Módulo de Pedidos y Pagos (Ventas transaccionales).
@@ -27,6 +28,8 @@ from login import pedir_login
 from catalogo import crear_modulo_catalogo
 from pedidos import crear_modulo_pedidos
 from reportes import crear_modulo_reportes
+from cajeros import crear_modulo_cajeros
+from clientes import crear_modulo_clientes
 
 
 def centrar_ventana(ventana, ancho, alto):
@@ -117,25 +120,52 @@ def abrir_ventana_principal(usuario):
     menu_navegacion = ttk.Notebook(ventana)
     menu_navegacion.pack(fill="both", expand=True, padx=10, pady=10)
 
-    # Pestaña 1: Catálogo y Bodegas (CRUD para Administrador / Solo Lectura para Cajero)
-    marco_catalogo = ttk.Frame(menu_navegacion)
-    titulo_catalogo = "Gestión de Catálogo y Bodegas" if es_administrador else "Consulta de Catálogo"
-    menu_navegacion.add(marco_catalogo, text=titulo_catalogo)
-    crear_modulo_catalogo(marco_catalogo, solo_lectura=(not es_administrador))
-
-    # Pestaña 2: Módulo Transaccional de Pedidos y Pagos (para ambos roles)
-    marco_pedidos = ttk.Frame(menu_navegacion)
-    menu_navegacion.add(marco_pedidos, text="Pedidos y Transacciones")
-    crear_modulo_pedidos(marco_pedidos)
-
-    # Pestaña 3: Reportes Gerenciales y Gráficos Estadísticos (exclusivo para Administrador)
     if es_administrador:
+        # VISTA ADMINISTRADOR: Acceso completo a todos los módulos operativos y gerenciales
+        # 1. Catálogo y Bodegas (CRUD completo)
+        marco_catalogo = ttk.Frame(menu_navegacion)
+        menu_navegacion.add(marco_catalogo, text="Gestión de Catálogo y Bodegas")
+        crear_modulo_catalogo(marco_catalogo, solo_lectura=False)
+
+        # 2. Gestión de Clientes (Crear y Eliminar Clientes)
+        marco_clientes = ttk.Frame(menu_navegacion)
+        menu_navegacion.add(marco_clientes, text="Gestión de Clientes")
+        crear_modulo_clientes(marco_clientes)
+
+        # 3. Módulo Transaccional de Pedidos y Pagos
+        marco_pedidos = ttk.Frame(menu_navegacion)
+        menu_navegacion.add(marco_pedidos, text="Pedidos y Transacciones")
+        crear_modulo_pedidos(marco_pedidos)
+
+        # 4. Reportes Gerenciales y Gráficos Estadísticos (Exclusivo Administrador)
         marco_reportes = ttk.Frame(menu_navegacion)
         menu_navegacion.add(marco_reportes, text="Reportes Gerenciales y Gráficos")
         crear_modulo_reportes(marco_reportes)
+
+        # 5. Gestión de Cajeros (Exclusivo Administrador)
+        marco_cajeros = ttk.Frame(menu_navegacion)
+        menu_navegacion.add(marco_cajeros, text="Gestión de Cajeros")
+        crear_modulo_cajeros(marco_cajeros)
+
     else:
-        # Si es cajero, iniciamos visualizando directamente la pestaña de ventas/pedidos
-        menu_navegacion.select(marco_pedidos)
+        # VISTA CAJERO:
+        # Acceso exclusivo a operaciones de venta, consulta de existencias y clientes.
+        # Las pestañas de administración (Gestión de Cajeros y Reportes) NO se agregan ni se instancian.
+        
+        # 1. Pedidos y Transacciones (Venta) - Pestaña predeterminada al inicio
+        marco_pedidos = ttk.Frame(menu_navegacion)
+        menu_navegacion.add(marco_pedidos, text="Pedidos y Transacciones")
+        crear_modulo_pedidos(marco_pedidos)
+
+        # 2. Consulta de Catálogo (Solo Lectura)
+        marco_catalogo = ttk.Frame(menu_navegacion)
+        menu_navegacion.add(marco_catalogo, text="Consulta de Catálogo")
+        crear_modulo_catalogo(marco_catalogo, solo_lectura=True)
+
+        # 3. Gestión de Clientes
+        marco_clientes = ttk.Frame(menu_navegacion)
+        menu_navegacion.add(marco_clientes, text="Gestión de Clientes")
+        crear_modulo_clientes(marco_clientes)
 
     ventana.mainloop()
     return resultado["cerrar_sesion"]

@@ -108,10 +108,10 @@ def cerrar_conexion(conexion, cursor=None):
             pass
 
 
-def consultar(sql, parametros=()):
+def consultar(sql, parametros=(), mostrar_error=True):
     """
     Ejecuta una consulta SELECT parametrizada y retorna una lista de tuplas con los resultados.
-    Si ocurre un error, muestra una alerta y retorna una lista vacía.
+    Si ocurre un error, muestra una alerta (si mostrar_error=True) y retorna una lista vacía.
     """
     conexion = obtener_conexion()
     if conexion is None:
@@ -123,13 +123,14 @@ def consultar(sql, parametros=()):
         cursor.execute(sql, parametros)
         return cursor.fetchall()
     except Error as e:
-        messagebox.showerror("Error en la consulta SQL", traducir_error(e))
+        if mostrar_error:
+            messagebox.showerror("Error en la consulta SQL", traducir_error(e))
         return []
     finally:
         cerrar_conexion(conexion, cursor)
 
 
-def ejecutar(sql, parametros=()):
+def ejecutar(sql, parametros=(), mostrar_error=True):
     """
     Ejecuta instrucciones INSERT, UPDATE o DELETE con COMMIT automático y ROLLBACK ante errores.
     Retorna la cantidad de filas afectadas o None si falló.
@@ -146,7 +147,8 @@ def ejecutar(sql, parametros=()):
         return cursor.rowcount
     except Error as e:
         conexion.rollback()
-        messagebox.showerror("No se pudo guardar", traducir_error(e))
+        if mostrar_error:
+            messagebox.showerror("No se pudo guardar", traducir_error(e))
         return None
     finally:
         cerrar_conexion(conexion, cursor)

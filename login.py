@@ -21,7 +21,7 @@ Cuentas configuradas en la base de datos MariaDB:
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from conexion import probar_conexion, establecer_sesion
+from conexion import probar_conexion, establecer_sesion, consultar
 
 
 def centrar_ventana(ventana, ancho, alto):
@@ -75,39 +75,84 @@ def pedir_login():
     entrada_contrasena.insert(0, "Admin2026*Seguro")
 
     def autenticar():
-        """Valida las credenciales contra MariaDB en tiempo real."""
+        """Valida las credenciales contra MariaDB o la tabla usuario en tiempo real."""
         usuario = entrada_usuario.get().strip()
         contrasena = entrada_contrasena.get().strip()
 
         if not usuario:
-            messagebox.showwarning("Campo vacío", "Por favor ingresa el usuario correcto.")
+            messagebox.showwarning("Campo vacío", "Por favor ingresa el usuario o correo correcto.")
             return
 
-        # Intentamos conectar a MariaDB
-        exito, mensaje_error = probar_conexion(usuario, contrasena)
+        # 1. Probar credenciales directas de MariaDB (admin_db, cajero_app, root)
+        exito_db, mensaje_error = probar_conexion(usuario, contrasena)
 
-        if not exito:
+        es_usuario_registrado = False
+        registro_usuario = None
+        nombre_display = "Operador de Caja"
+        rol = "Cajero"
+
+        # 2. Si no es conexión directa a MariaDB, validamos contra la tabla 'usuario'
+        if not exito_db:
+            for u_serv, p_serv in (("cajero_app", "Cajero2026*App"), ("admin_db", "Admin2026*Seguro"), ("root", "")):
+                try:
+                    establecer_sesion(u_serv, p_serv, "Cajero")
+                    filas = consultar(
+                        """
+                        SELECT id_usuario, cedula, nombre, apellido, correo, rol 
+                        FROM usuario 
+                        WHERE (LOWER(correo) = %s OR CAST(cedula AS CHAR) = %s OR LOWER(nombre) = %s)
+                          AND contrasena = %s;
+                        """,
+                        (usuario.lower(), usuario, usuario.lower(), contrasena)
+                    )
+                    if filas:
+                        es_usuario_registrado = True
+                        registro_usuario = filas[0]
+                        break
+                except:
+                    continue
+
+        if not exito_db and not es_usuario_registrado:
             messagebox.showerror(
                 "Error de Autenticación",
-                f"No se pudo conectar a MariaDB con el usuario '{usuario}'.\n\n"
-                f"Detalle: {mensaje_error}"
+                f"No se pudo iniciar sesión con '{usuario}'.\n\n"
+                f"Verifica que el usuario/correo y la contraseña sean correctos."
             )
             return
 
-        # Asignamos el rol según la cuenta de MariaDB conectada
-        if usuario.lower() in ("admin_db", "root"):
-            rol = "Administrador"
-        elif usuario.lower() == "cajero_app":
-            rol = "Cajero"
-        else:
-            rol = "Administrador"
+        # 3. Determinación de rol y sesión según la autenticación
+        if es_usuario_registrado and registro_usuario:
+            u_id, u_ced, u_nom, u_ape, u_cor, u_rol = registro_usuario
+            nombre_display = f"{u_nom} {u_ape}"
+            rol_detectado = str(u_rol).strip() if u_rol else "Cajero"
 
-        # Configuramos la sesión activa en conexion.py
-        establecer_sesion(usuario, contrasena, rol)
+            if rol_detectado == "Administrador":
+                rol = "Administrador"
+                establecer_sesion("admin_db", "Admin2026*Seguro", "Administrador")
+            elif rol_detectado == "Cajero":
+                rol = "Cajero"
+                establecer_sesion("cajero_app", "Cajero2026*App", "Cajero")
+            else:
+                messagebox.showwarning(
+                    "Acceso No Autorizado",
+                    f"El usuario '{u_nom} {u_ape}' tiene rol '{rol_detectado}'.\n"
+                    f"Solo los roles 'Administrador' y 'Cajero' pueden acceder al sistema."
+                )
+                return
+        else:
+            # Conexión directa como usuario MariaDB predefinido
+            if usuario.lower() in ("admin_db", "root"):
+                rol = "Administrador"
+                nombre_display = "Administrador General"
+            else:
+                rol = "Cajero"
+                nombre_display = "Operador de Caja Principal"
+
+            establecer_sesion(usuario, contrasena, rol)
 
         usuario_autenticado.update({
             "usuario": usuario,
-            "nombre": "Administrador General" if rol == "Administrador" else "Cajero / Operador",
+            "nombre": nombre_display,
             "apellido": f"({usuario})",
             "rol": rol
         })
@@ -116,6 +161,7 @@ def pedir_login():
             "Acceso Concedido",
             f"¡Conexión exitosa!\n\n"
             f"Usuario: {usuario}\n"
+            f"Nombre: {nombre_display}\n"
             f"Rol Asignado: {rol}\n"
             f"Base de Datos: parcial"
         )

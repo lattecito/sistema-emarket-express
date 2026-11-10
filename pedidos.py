@@ -24,6 +24,7 @@ from decimal import Decimal
 from mysql.connector import Error
 
 from conexion import consultar, ejecutar, obtener_conexion, cerrar_conexion, traducir_error
+from clientes import abrir_dialogo_nuevo_cliente, abrir_dialogo_gestionar_clientes, eliminar_cliente_db
 
 METODOS_PAGO = ("Tarjeta", "PSE", "Efectivo")
 ESTADOS_PEDIDO = ("pendiente", "enviado", "entregado")
@@ -509,14 +510,87 @@ def crear_modulo_pedidos(padre):
     seccion_cliente = ttk.LabelFrame(izquierda, text="1. Selección de Cliente y Pago", padding=10)
     seccion_cliente.pack(fill="x")
 
-    ttk.Label(seccion_cliente, text="Cliente:").grid(row=0, column=0, sticky="w", pady=4)
-    cmb_cliente = ttk.Combobox(seccion_cliente, state="readonly", width=46)
-    cmb_cliente.grid(row=0, column=1, columnspan=2, sticky="ew", pady=4, padx=5)
+    fila_cli = ttk.Frame(seccion_cliente)
+    fila_cli.pack(fill="x", pady=(0, 4))
 
-    ttk.Label(seccion_cliente, text="Método de Pago:").grid(row=1, column=0, sticky="w", pady=4)
-    cmb_metodo = ttk.Combobox(seccion_cliente, state="readonly", values=METODOS_PAGO, width=15)
-    cmb_metodo.grid(row=1, column=1, sticky="w", pady=4, padx=5)
+    ttk.Label(fila_cli, text="Cliente:").pack(side="left")
+    cmb_cliente = ttk.Combobox(fila_cli, state="readonly", width=30)
+    cmb_cliente.pack(side="left", fill="x", expand=True, padx=5)
+
+    def abrir_nuevo_cliente_desde_pedidos():
+        def al_crear_cliente(nuevo_id):
+            cargar_listas()
+            for item in cmb_cliente["values"]:
+                if item.startswith(f"{nuevo_id} -"):
+                    cmb_cliente.set(item)
+                    break
+        abrir_dialogo_nuevo_cliente(padre, al_guardar_exitoso=al_crear_cliente)
+
+    def eliminar_cliente_seleccionado_en_combo():
+        valor = cmb_cliente.get()
+        if not valor:
+            messagebox.showwarning("Seleccionar Cliente", "Por favor selecciona un cliente en la lista para eliminarlo.")
+            return
+
+        try:
+            id_usuario = int(valor.split("-")[0].strip())
+        except:
+            return
+
+        # Consultar pedidos asociados
+        fila_pedidos = consultar("SELECT COUNT(*) FROM pedido WHERE usuario_pedido = %s;", (id_usuario,), mostrar_error=False)
+        cant_pedidos = fila_pedidos[0][0] if fila_pedidos else 0
+
+        if cant_pedidos > 0:
+            messagebox.showerror(
+                "Eliminación Bloqueada (Error 1451)",
+                f"No es posible eliminar al cliente '{valor}'.\n\n"
+                f"Cuenta con {cant_pedidos} pedido(s) registrado(s) en el sistema.\n"
+                f"La restricción 'ON DELETE RESTRICT' de la base de datos bloquea el borrado "
+                f"para proteger la integridad de las ventas registradas."
+            )
+            return
+
+        msg = f"¿Estás seguro de ELIMINAR al cliente '{valor}'?\n\nEsta acción eliminará físicamente al cliente de la base de datos."
+        if messagebox.askyesno("Confirmar Eliminación de Cliente", msg):
+            exito, err = eliminar_cliente_db(id_usuario)
+            if exito:
+                messagebox.showinfo("Cliente Eliminado", "El cliente ha sido eliminado exitosamente de MariaDB.")
+                cargar_listas()
+                cmb_cliente.set("")
+            else:
+                messagebox.showerror("Error al Eliminar", err)
+
+    btn_nuevo_cli = ttk.Button(
+        fila_cli,
+        text="Nuevo",
+        style="Exito.TButton",
+        command=abrir_nuevo_cliente_desde_pedidos
+    )
+    btn_nuevo_cli.pack(side="left", padx=2)
+
+    btn_gestionar_cli = ttk.Button(
+        fila_cli,
+        text="Gestionar",
+        command=lambda: abrir_dialogo_gestionar_clientes(padre, al_cerrar=cargar_listas)
+    )
+    btn_gestionar_cli.pack(side="left", padx=2)
+
+    fila_pago = ttk.Frame(seccion_cliente)
+    fila_pago.pack(fill="x", pady=(4, 0))
+
+    ttk.Label(fila_pago, text="Método de Pago:").pack(side="left")
+    cmb_metodo = ttk.Combobox(fila_pago, state="readonly", values=METODOS_PAGO, width=15)
+    cmb_metodo.pack(side="left", padx=5)
     cmb_metodo.current(0)
+
+    btn_borrar_cli_sel = ttk.Button(
+        fila_pago,
+        text="Eliminar Cliente",
+        style="Peligro.TButton",
+        command=eliminar_cliente_seleccionado_en_combo
+    )
+    btn_borrar_cli_sel.pack(side="right")
 
     # 2. Selección de artículos
     seccion_productos = ttk.LabelFrame(izquierda, text="2. Agregar Producto a la Venta", padding=10)
@@ -617,7 +691,9 @@ def crear_modulo_pedidos(padre):
         """Carga clientes y catálogo disponible desde la BD."""
         clientes = consultar("""
             SELECT id_usuario, nombre, apellido, cedula
-            FROM usuario ORDER BY nombre, apellido
+            FROM usuario 
+            WHERE rol = 'Cliente' OR rol IS NULL OR rol = ''
+            ORDER BY nombre, apellido
         """)
         cmb_cliente["values"] = [f"{c[0]} - {c[1]} {c[2]} (C.C. {c[3]})" for c in clientes]
 

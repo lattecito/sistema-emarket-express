@@ -12,14 +12,16 @@ USE parcial;
 -- 1. DDL: CREACIÓN DE TABLAS, RESTRICCIONES E ÍNDICES
 -- =============================================================================
 
--- 1.1 Tabla: usuario
+-- 1.1 Tabla: usuario (Clientes y Cajeros del sistema)
 CREATE TABLE usuario (
-    id_usuario INT(11) NOT NULL,
+    id_usuario INT(11) NOT NULL AUTO_INCREMENT,
     cedula INT(11) NOT NULL UNIQUE,
     nombre VARCHAR(50) NOT NULL,
     apellido VARCHAR(50) NOT NULL,
     correo VARCHAR(50) NOT NULL UNIQUE,
-    telefono INT(11) NOT NULL,
+    telefono VARCHAR(20) NOT NULL,
+    contrasena VARCHAR(100) DEFAULT NULL,
+    rol ENUM('Administrador', 'Cajero', 'Cliente') NOT NULL DEFAULT 'Cliente',
     PRIMARY KEY (id_usuario),
     INDEX idx_usuario_correo (correo)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -87,11 +89,11 @@ CREATE TABLE pedido (
     id_pedido INT(11) NOT NULL AUTO_INCREMENT,
     fecha_transaccion DATE NOT NULL,
     usuario_pedido INT(11) NOT NULL,
-    total INT(11) NOT NULL,
+    total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     estado_pedido VARCHAR(50) NOT NULL,
     PRIMARY KEY (id_pedido),
     INDEX idx_pedido_fecha (fecha_transaccion),
-    CONSTRAINT fk_pedido_usuario FOREIGN KEY (usuario_pedido) REFERENCES usuario(id_usuario) ON UPDATE CASCADE ON DELETE CASCADE,
+    CONSTRAINT fk_pedido_usuario FOREIGN KEY (usuario_pedido) REFERENCES usuario(id_usuario) ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT fk_pedido_estado_texto FOREIGN KEY (estado_pedido) REFERENCES estado(estado) ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -134,6 +136,8 @@ CREATE TABLE auditoria_precio_articulo (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 
+
+
 -- =============================================================================
 -- 2. DML: POBLAMIENTO INICIAL DE DATOS DE PRUEBA
 -- =============================================================================
@@ -148,26 +152,39 @@ INSERT INTO estado (id_estado, estado) VALUES
 INSERT INTO categoria (id_categoria, nombre, descripcion) VALUES 
 (1, 'Ropa y Calzado', 'Prendas de vestir y calzado formal e informal'),
 (2, 'Accesorios', 'Bolsos, cinturones, gafas y bisutería'),
-(3, 'Cuidado Personal', 'Productos naturales, aromáticos y cosméticos');
+(3, 'Cuidado Personal', 'Productos naturales, aromáticos y cosméticos'),
+(5, 'Casual', 'Ropa casual'),
+(6, 'Deportiva', 'Ropa deportiva'),
+(7, 'Oversized', 'Ropa ancha'),
+(8, 'Mujer', 'Ropa de mujer'),
+(9, 'Hombre', 'Ropa de hombre');
 
 -- Proveedores
 INSERT INTO proveedor (nit, nombre, contacto, ciudad) VALUES 
 ('900123456-1', 'Textiles del Llano S.A.S', '3105551234', 'Villavicencio'),
 ('900987654-2', 'Distribuidora Moda Colombia', '3208889900', 'Bogotá'),
-('800456789-3', 'Cosméticos & Salud Natural', '3157774411', 'Medellín');
+('800456789-3', 'Cosméticos & Salud Natural', '3157774411', 'Medellín'),
+('879463208-6', 'Laboratorios Funat', '3116521452', 'Bogotá');
 
--- Usuarios
-INSERT INTO usuario (id_usuario, cedula, nombre, apellido, correo, telefono) VALUES 
-(1, 112305, 'Juan', 'Gómez', 'gomezjuan@gmail.com', 30023520),
-(2, 102530, 'Nicolle', 'Prada', 'nicolleprada@gmail.com', 32106549),
-(3, 335164, 'Martín', 'Berdugo', 'berdugomartin@gmail.com', 31259878),
-(4, 351204, 'Nicolás', 'Ortiz', 'nicoortiz@gmail.com', 30012547);
+-- Usuarios (Clientes y Cajeros de prueba)
+INSERT INTO usuario (id_usuario, cedula, nombre, apellido, correo, telefono, contrasena, rol) VALUES 
+(1, 112305, 'Juan', 'Gómez', 'gomezjuan@gmail.com', '30023520', '123456', 'Cliente'),
+(2, 102530, 'Nicolle', 'Prada', 'nicolleprada@gmail.com', '32106549', '123456', 'Cliente'),
+(3, 335164, 'Martín', 'Berdugo', 'berdugomartin@gmail.com', '31259878', '123456', 'Cliente'),
+(4, 351204, 'Nicolás', 'Ortiz', 'nicoortiz@gmail.com', '30012547', '123456', 'Cliente'),
+(5, 1009876, 'Carlos', 'Cajero', 'cajero1@emarket.com', '3115559988', 'Cajero2026*App', 'Cajero'),
+(6, 11225222, 'alejo', 'flor', 'floralejo@gmal.cm', '31256234', '123456', 'Cliente');
 
 -- Productos
 INSERT INTO productos (codigo, nombre, precio_unitario, cantidad_disponible, id_categoria, nit_proveedor) VALUES 
-(1100, 'jean', 145000.00, 20, 1, '900123456-1'),
+(1100, 'jean', 145000.00, 19, 1, '900123456-1'),
 (1101, 'tenis', 360000.00, 10, 1, '900987654-2'),
-(1102, 'camisa', 95000.00, 15, 1, '900123456-1');
+(1102, 'camisa', 95000.00, 15, 1, '900123456-1'),
+(1103, 'chaqueta', 220000.00, 8, 5, '900987654-2'),
+(1104, 'gorra', 55000.00, 23, 5, '900987654-2'),
+(1105, 'medias', 25000.00, 15, 6, '900987654-2'),
+(1107, 'correa', 45000.00, 9, 9, '900987654-2'),
+(2000, 'Purgante', 10000.00, 11, 3, '879463208-6');
 
 -- Bodegas
 INSERT INTO bodega (id_bodega, nombre, ubicacion) VALUES 
@@ -201,6 +218,8 @@ INSERT INTO factura_pago (id_factura, id_pedido, metodo_pago, fecha_pago, valor_
 (1, 1, 'Tarjeta', '2026-01-26 10:15:00', 360000.00, 'Aprobado'),
 (2, 2, 'PSE', '2026-09-16 14:30:00', 435000.00, 'Aprobado'),
 (3, 3, 'Efectivo', '2026-08-11 09:00:00', 95000.00, 'Pendiente');
+
+
 
 
 -- =============================================================================
@@ -572,6 +591,7 @@ CREATE ROLE IF NOT EXISTS 'Cajero_App';
 GRANT ALL PRIVILEGES ON parcial.* TO 'Administrador_DB';
 
 GRANT SELECT ON parcial.* TO 'Cajero_App';
+GRANT INSERT, UPDATE, DELETE ON parcial.usuario TO 'Cajero_App';
 GRANT INSERT, UPDATE ON parcial.pedido TO 'Cajero_App';
 GRANT INSERT, DELETE ON parcial.transaccion TO 'Cajero_App';
 GRANT INSERT, UPDATE ON parcial.factura_pago TO 'Cajero_App';
@@ -581,14 +601,28 @@ GRANT EXECUTE ON PROCEDURE parcial.SP_ModificarPedidoExistente TO 'Cajero_App';
 
 -- 6.3 Creación de usuarios de conexión
 CREATE USER IF NOT EXISTS 'admin_db'@'localhost' IDENTIFIED BY 'Admin2026*Seguro';
-CREATE USER IF NOT EXISTS 'cajero_app'@'localhost' IDENTIFIED BY 'Cajero2026*App';
+CREATE USER IF NOT EXISTS 'admin_db'@'127.0.0.1' IDENTIFIED BY 'Admin2026*Seguro';
+CREATE USER IF NOT EXISTS 'admin_db'@'%' IDENTIFIED BY 'Admin2026*Seguro';
 
--- 6.4 Concesión de roles a los usuarios
-GRANT 'Administrador_DB' TO 'admin_db'@'localhost';
-GRANT 'Cajero_App' TO 'cajero_app'@'localhost';
+CREATE USER IF NOT EXISTS 'cajero_app'@'localhost' IDENTIFIED BY 'Cajero2026*App';
+CREATE USER IF NOT EXISTS 'cajero_app'@'127.0.0.1' IDENTIFIED BY 'Cajero2026*App';
+CREATE USER IF NOT EXISTS 'cajero_app'@'%' IDENTIFIED BY 'Cajero2026*App';
+
+-- 6.4 Concesión de roles y privilegios a los usuarios
+GRANT 'Administrador_DB' TO 'admin_db'@'localhost', 'admin_db'@'127.0.0.1', 'admin_db'@'%';
+GRANT 'Cajero_App' TO 'cajero_app'@'localhost', 'cajero_app'@'127.0.0.1', 'cajero_app'@'%';
+
+GRANT ALL PRIVILEGES ON *.* TO 'admin_db'@'localhost' WITH GRANT OPTION;
+GRANT ALL PRIVILEGES ON *.* TO 'admin_db'@'127.0.0.1' WITH GRANT OPTION;
+GRANT ALL PRIVILEGES ON *.* TO 'admin_db'@'%' WITH GRANT OPTION;
 
 -- 6.5 Activación automática de roles al iniciar sesión
 SET DEFAULT ROLE 'Administrador_DB' FOR 'admin_db'@'localhost';
+SET DEFAULT ROLE 'Administrador_DB' FOR 'admin_db'@'127.0.0.1';
+SET DEFAULT ROLE 'Administrador_DB' FOR 'admin_db'@'%';
+
 SET DEFAULT ROLE 'Cajero_App' FOR 'cajero_app'@'localhost';
+SET DEFAULT ROLE 'Cajero_App' FOR 'cajero_app'@'127.0.0.1';
+SET DEFAULT ROLE 'Cajero_App' FOR 'cajero_app'@'%';
 
 FLUSH PRIVILEGES;

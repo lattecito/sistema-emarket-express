@@ -18,6 +18,13 @@ Proyecto académico para el curso de **Bases de Datos** - Universidad de los Lla
   - `SP_ActualizarInventarioBodega`: Transferencia atómica de existencias entre bodegas.
 - **Facturación y Desglose de Productos:**
   - Consulta interactiva de factura electrónica con desglose ítem por ítem para cada pedido.
+- **Gestión de Clientes (Administrador y Cajeros):**
+  - Creación y eliminación de clientes (`usuario` con `rol = 'Cliente'`) disponible en su pestaña dedicada y en la venta de pedidos (`+ Nuevo Cliente`).
+  - Validación de identificaciones únicas (Cédula y Correo electrónico).
+  - Protección de integridad referencial con `ON DELETE RESTRICT`: bloqueo de borrado de clientes con compras asociadas (Error 1451).
+- **Gestión de Seguridad y Cajeros (Exclusivo Administrador):**
+  - Creación y eliminación de operadores en la tabla `usuario` con `rol = 'Cajero'`.
+  - Autenticación y operación segura bajo el rol de base de datos `Cajero_App`.
 - **Triggers (Disparadores de Base de Datos):**
   - `trg_auditoria_precio_articulo`: Registra cambios de precio de productos automáticamente en `auditoria_precio_articulo`.
   - `trg_validar_stock_pedido`: Valida existencias antes de registrar transacciones.
@@ -34,8 +41,10 @@ Proyecto académico para el curso de **Bases de Datos** - Universidad de los Lla
 ├── login.py             # Ventana de autenticación de usuarios de base de datos
 ├── main.py              # Ventana principal y control de navegación por roles
 ├── catalogo.py          # Módulo CRUD de productos, categorías, proveedores y bodegas
+├── clientes.py          # Gestión de Clientes (Crear y Eliminar) para Administrador y Cajeros
 ├── pedidos.py           # Módulo transaccional de ventas llamando a SP_RegistrarPedidoCompleto
 ├── reportes.py          # Consultas a las vistas analíticas y gráficos con Matplotlib
+├── cajeros.py           # Módulo exclusivo de Administrador para crear y eliminar cajeros en MariaDB
 ├── requirements.txt     # Librerías Python requeridas
 ├── script base/
 │   └── script.sql       # Script SQL consolidado (DDL, DML, Triggers, SP, Vistas y Roles)
