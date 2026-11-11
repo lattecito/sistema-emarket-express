@@ -22,51 +22,19 @@ from tkinter import ttk, messagebox
 # pyrefly: ignore[missing-import]
 from mysql.connector import Error
 
-from conexion import (
-    consultar, ejecutar, obtener_conexion, cerrar_conexion, traducir_error
-)
+from conexion import consultar, ejecutar, ejecutar_seguro, traducir_error
+from estilos import FUENTE
 
-
-def asegurar_estructura_usuario():
-    """
-    Garantiza que la tabla usuario cuente con los campos 'contrasena' y 'rol',
-    y elimina la tabla obsoleta 'cajeros_app' si aún existe en la base de datos.
-    Solo se ejecuta bajo privilegios de Administrador.
-    """
-    from conexion import obtener_sesion_actual
-    sesion = obtener_sesion_actual()
-    if sesion.get("rol") != "Administrador":
-        return
-
-    try:
-        # 1. Eliminar la tabla obsoleta cajeros_app
-        ejecutar("DROP TABLE IF EXISTS cajeros_app;", mostrar_error=False)
-    except:
-        pass
-
-    try:
-        # 2. Verificar y agregar columnas necesarias en usuario
-        columnas = [c[0].lower() for c in consultar("SHOW COLUMNS FROM usuario;", mostrar_error=False)]
-        if "contrasena" not in columnas:
-            ejecutar("ALTER TABLE usuario ADD COLUMN contrasena VARCHAR(100) NULL AFTER telefono;", mostrar_error=False)
-        if "rol" not in columnas:
-            ejecutar("ALTER TABLE usuario ADD COLUMN rol VARCHAR(30) NOT NULL DEFAULT 'Cliente' AFTER contrasena;", mostrar_error=False)
-            ejecutar("UPDATE usuario SET rol = 'Cliente' WHERE rol IS NULL OR rol = '';", mostrar_error=False)
-
-        # 3. Intentar configurar AUTO_INCREMENT en id_usuario si no lo tiene
-        try:
-            ejecutar("ALTER TABLE usuario MODIFY id_usuario INT(11) NOT NULL AUTO_INCREMENT;", mostrar_error=False)
-        except:
-            pass
-    except:
-        pass
+# E15: Teléfono con 7 a 15 dígitos numéricos (opcionalmente con un '+' inicial)
+PATRON_TELEFONO = re.compile(r"^\+?\d{7,15}$")
+LONGITUD_MIN_CLAVE = 4
 
 
 def listar_cajeros_db(busqueda=""):
     """
     Consulta y lista los cajeros registrados en la tabla 'usuario' (rol = 'Cajero').
+    E7: Solo se ejecutan consultas SELECT (sin DDL en tiempo de ejecución).
     """
-    asegurar_estructura_usuario()
     if busqueda.strip():
         termino = f"%{busqueda.strip().lower()}%"
         sql = """
@@ -94,8 +62,6 @@ def crear_cajero_db(cedula, nombre, apellido, correo, telefono, contrasena):
     """
     Inserta un nuevo operador cajero en la tabla 'usuario' con rol = 'Cajero'.
     """
-    asegurar_estructura_usuario()
-
     # Validar cédula
     try:
         cedula_int = int(cedula)
@@ -115,16 +81,18 @@ def crear_cajero_db(cedula, nombre, apellido, correo, telefono, contrasena):
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", correo_limpio):
         return False, "Ingresa un correo electrónico válido (ej: cajero@emarket.com)."
 
-    # Validar teléfono (compatible con VARCHAR(20) e INT)
-    tel_limpio = re.sub(r"[^\d+]", "", str(telefono).strip())
-    if not tel_limpio:
-        return False, "El teléfono no puede estar vacío y debe contener dígitos válidos."
-    if len(tel_limpio) > 20:
-        return False, "El teléfono no puede superar los 20 caracteres."
+    # E15: Validar teléfono (7 a 15 dígitos numéricos; se ignoran espacios y guiones)
+    tel_limpio = re.sub(r"[\s\-()]", "", str(telefono).strip())
+    if not PATRON_TELEFONO.match(tel_limpio):
+        return False, "El teléfono debe contener entre 7 y 15 dígitos numéricos (ej: 3115559988)."
+
+    # Validar longitudes según la tabla usuario
+    if len(nombre.strip()) > 50 or len(apellido.strip()) > 50 or len(correo_limpio) > 50:
+        return False, "Nombre, apellido y correo no pueden superar los 50 caracteres."
 
     # Validar contraseña
-    if not contrasena or len(contrasena) < 4:
-        return False, "La contraseña debe tener al menos 4 caracteres."
+    if not contrasena or len(contrasena) < LONGITUD_MIN_CLAVE:
+        return False, f"La contraseña debe tener al menos {LONGITUD_MIN_CLAVE} caracteres."
 
     # Verificar cédula duplicada
     existe_ced = consultar("SELECT id_usuario FROM usuario WHERE cedula = %s;", (cedula_int,))
@@ -136,43 +104,56 @@ def crear_cajero_db(cedula, nombre, apellido, correo, telefono, contrasena):
     if existe_cor:
         return False, f"Ya existe un usuario o cajero registrado con el correo '{correo_limpio}'."
 
-    # Inserción en la tabla usuario con rol = 'Cajero'
+    # Inserción en la tabla usuario con rol = 'Cajero' (id_usuario es AUTO_INCREMENT - E22)
     sql = """
         INSERT INTO usuario (cedula, nombre, apellido, correo, telefono, contrasena, rol) 
         VALUES (%s, %s, %s, %s, %s, %s, 'Cajero');
     """
-    res = ejecutar(sql, (cedula_int, nombre.strip(), apellido.strip(), correo_limpio, tel_limpio, contrasena))
-
-    # Si la tabla no tiene AUTO_INCREMENT en id_usuario, insertamos calculando el id manualmente
-    if res is None:
-        sql_fallback = """
-            INSERT INTO usuario (id_usuario, cedula, nombre, apellido, correo, telefono, contrasena, rol) 
-            VALUES ((SELECT IFNULL(MAX(u2.id_usuario), 0) + 1 FROM usuario u2), %s, %s, %s, %s, %s, %s, 'Cajero');
-        """
-        res = ejecutar(sql_fallback, (cedula_int, nombre.strip(), apellido.strip(), correo_limpio, tel_limpio, contrasena))
-
+    res, error = ejecutar_seguro(sql, (cedula_int, nombre.strip(), apellido.strip(), correo_limpio, tel_limpio, contrasena))
+    if error is not None:
+        return False, traducir_error(error)
     if res is not None:
         return True, None
-    else:
-        return False, "No se pudo registrar el cajero en la tabla 'usuario'."
+    return False, "No se pudo registrar el cajero en la tabla 'usuario'."
 
 
 def eliminar_cajero_db(id_usuario):
     """
     Elimina físicamente el registro del cajero de la tabla usuario donde rol = 'Cajero'.
     """
-    asegurar_estructura_usuario()
-    try:
-        sql = "DELETE FROM usuario WHERE id_usuario = %s AND rol = 'Cajero';"
-        res = ejecutar(sql, (id_usuario,))
-        if res is not None and res > 0:
-            return True, None
-        elif res == 0:
-            return False, f"No se encontró un cajero con ID {id_usuario}."
-        else:
-            return False, "No se pudo eliminar el cajero de la base de datos."
-    except Error as e:
-        return False, traducir_error(e)
+    res, error = ejecutar_seguro("DELETE FROM usuario WHERE id_usuario = %s AND rol = 'Cajero';", (id_usuario,))
+    if error is not None:
+        if getattr(error, "errno", None) == 1451:
+            return False, "No se puede eliminar el cajero porque tiene pedidos asociados."
+        return False, traducir_error(error)
+    if res is not None and res > 0:
+        return True, None
+    if res == 0:
+        return False, f"No se encontró un cajero con ID {id_usuario}."
+    return False, "No se pudo eliminar el cajero de la base de datos."
+
+
+def crear_tabla(padre, columnas, anchos=None, alto=12):
+    """Crea una tabla ttk.Treeview con barras de desplazamiento vertical y horizontal (E13)."""
+    marco = ttk.Frame(padre)
+    ids = [f"c{i}" for i in range(len(columnas))]
+    tabla = ttk.Treeview(marco, columns=ids, show="headings", height=alto)
+
+    for i, titulo in enumerate(columnas):
+        ancho = anchos[i] if anchos else 120
+        tabla.heading(ids[i], text=titulo)
+        tabla.column(ids[i], width=ancho, minwidth=50, anchor="center", stretch=False)
+
+    barra_v = ttk.Scrollbar(marco, orient="vertical", command=tabla.yview)
+    barra_h = ttk.Scrollbar(marco, orient="horizontal", command=tabla.xview)
+    tabla.configure(yscrollcommand=barra_v.set, xscrollcommand=barra_h.set)
+
+    tabla.grid(row=0, column=0, sticky="nsew")
+    barra_v.grid(row=0, column=1, sticky="ns")
+    barra_h.grid(row=1, column=0, sticky="ew")
+    marco.rowconfigure(0, weight=1)
+    marco.columnconfigure(0, weight=1)
+    return marco, tabla
 
 
 def crear_tabla(padre, columnas, anchos=None, alto=12):
@@ -207,8 +188,6 @@ def llenar_tabla(tabla, filas, usar_primera_columna_como_id=True):
 
 def crear_modulo_cajeros(padre):
     """Construye la interfaz visual para la administración de usuarios cajeros en la tabla usuario."""
-    asegurar_estructura_usuario()
-
     contenedor = ttk.Frame(padre, padding=12)
     contenedor.pack(fill="both", expand=True)
 
@@ -298,7 +277,7 @@ def crear_modulo_cajeros(padre):
     barra_acciones.pack(fill="x", pady=(10, 0))
 
     def cargar_cajeros():
-        asegurar_estructura_usuario()
+        # E7: Solo consulta (SELECT); no se ejecuta DDL al teclear en el buscador
         busqueda = ent_busq.get()
         filas = listar_cajeros_db(busqueda)
         llenar_tabla(tabla_cajeros, filas, usar_primera_columna_como_id=True)
@@ -332,6 +311,21 @@ def crear_modulo_cajeros(padre):
         if clave != clave_conf:
             messagebox.showerror("Contraseñas no coinciden", "Las contraseñas ingresadas no coinciden.")
             ent_clave_conf.focus()
+            return
+
+        # E17: Validar longitud mínima de la contraseña ANTES de pedir confirmación
+        if len(clave) < LONGITUD_MIN_CLAVE:
+            messagebox.showwarning(
+                "Contraseña muy corta",
+                f"La contraseña debe tener al menos {LONGITUD_MIN_CLAVE} caracteres."
+            )
+            ent_clave.focus()
+            return
+
+        # E15: Validar teléfono antes de confirmar
+        if not PATRON_TELEFONO.match(re.sub(r"[\s\-()]", "", tel)):
+            messagebox.showwarning("Teléfono inválido", "El teléfono debe contener entre 7 y 15 dígitos numéricos.")
+            ent_telefono.focus()
             return
 
         confirmar = messagebox.askyesno(
@@ -407,7 +401,7 @@ def crear_modulo_cajeros(padre):
     btn_limpiar.pack(fill="x")
 
     # Botones en panel derecho
-    btn_eliminar = ttk.Button(barra_acciones, text="Eliminar Cajero Seleccionado", style="Peligro.TButton", command=eliminar_cajero)
+    btn_eliminar = ttk.Button(barra_acciones, text="Eliminar Cajero", style="Peligro.TButton", command=eliminar_cajero)
     btn_eliminar.pack(side="left", padx=(0, 6))
 
     btn_recargar = ttk.Button(barra_acciones, text="Recargar Lista", command=cargar_cajeros)

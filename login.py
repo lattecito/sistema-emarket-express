@@ -21,7 +21,8 @@ Cuentas configuradas en la base de datos MariaDB:
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from conexion import probar_conexion, establecer_sesion, consultar
+from conexion import probar_conexion, establecer_sesion, consultar, limpiar_sesion
+from estilos import FUENTE
 
 
 def centrar_ventana(ventana, ancho, alto):
@@ -39,7 +40,7 @@ def pedir_login():
     usuario_autenticado = {}
 
     ventana = tk.Tk()
-    ventana.title("E-Market Express - Autenticación MariaDB")
+    ventana.title("E-Market Express - Autenticación")
     ventana.resizable(False, False)
     ventana.configure(bg="#f4f6f9")
     centrar_ventana(ventana, 460, 520)
@@ -64,23 +65,22 @@ def pedir_login():
     cuerpo = ttk.Frame(ventana, padding=(40, 20))
     cuerpo.pack(fill="both", expand=True)
 
-    ttk.Label(cuerpo, text="Usuario:").pack(anchor="w")
-    entrada_usuario = ttk.Entry(cuerpo, width=40, font=("Segoe UI", 11))
+    ttk.Label(cuerpo, text="Usuario o correo:").pack(anchor="w")
+    entrada_usuario = ttk.Entry(cuerpo, width=40, font=(FUENTE, 11))
     entrada_usuario.pack(fill="x", pady=(2, 12), ipady=3)
-    entrada_usuario.insert(0, "admin_db")  # Sugerencia inicial
+    # E5: Los campos inician VACÍOS (sin credenciales de prueba precargadas)
 
     ttk.Label(cuerpo, text="Contraseña:").pack(anchor="w")
-    entrada_contrasena = ttk.Entry(cuerpo, width=40, show="•", font=("Segoe UI", 11))
+    entrada_contrasena = ttk.Entry(cuerpo, width=40, show="•", font=(FUENTE, 11))
     entrada_contrasena.pack(fill="x", pady=(2, 16), ipady=3)
-    entrada_contrasena.insert(0, "Admin2026*Seguro")
 
     def autenticar():
         """Valida las credenciales contra MariaDB o la tabla usuario en tiempo real."""
         usuario = entrada_usuario.get().strip()
         contrasena = entrada_contrasena.get().strip()
 
-        if not usuario:
-            messagebox.showwarning("Campo vacío", "Por favor ingresa el usuario o correo correcto.")
+        if not usuario or not contrasena:
+            messagebox.showwarning("Campos vacíos", "Por favor ingresa el usuario (correo o cédula) y la contraseña.")
             return
 
         # 1. Probar credenciales directas de MariaDB (admin_db, cajero_app, root)
@@ -92,6 +92,7 @@ def pedir_login():
         rol = "Cajero"
 
         # 2. Si no es conexión directa a MariaDB, validamos contra la tabla 'usuario'
+        #    E14: SOLO se permite identificarse por correo electrónico o cédula (no por nombre).
         if not exito_db:
             for u_serv, p_serv in (("cajero_app", "Cajero2026*App"), ("admin_db", "Admin2026*Seguro"), ("root", "")):
                 try:
@@ -100,23 +101,26 @@ def pedir_login():
                         """
                         SELECT id_usuario, cedula, nombre, apellido, correo, rol 
                         FROM usuario 
-                        WHERE (LOWER(correo) = %s OR CAST(cedula AS CHAR) = %s OR LOWER(nombre) = %s)
+                        WHERE (LOWER(correo) = %s OR CAST(cedula AS CHAR) = %s)
                           AND contrasena = %s;
                         """,
-                        (usuario.lower(), usuario, usuario.lower(), contrasena)
+                        (usuario.lower(), usuario, contrasena),
+                        mostrar_error=False
                     )
                     if filas:
                         es_usuario_registrado = True
                         registro_usuario = filas[0]
                         break
-                except:
+                except Exception:
                     continue
 
         if not exito_db and not es_usuario_registrado:
+            # E14: No dejar privilegios residuales de la sesión de servicio usada para validar
+            limpiar_sesion()
             messagebox.showerror(
                 "Error de Autenticación",
                 f"No se pudo iniciar sesión con '{usuario}'.\n\n"
-                f"Verifica que el usuario/correo y la contraseña sean correctos."
+                f"Verifica que el correo/cédula y la contraseña sean correctos."
             )
             return
 
@@ -133,6 +137,7 @@ def pedir_login():
                 rol = "Cajero"
                 establecer_sesion("cajero_app", "Cajero2026*App", "Cajero")
             else:
+                limpiar_sesion()
                 messagebox.showwarning(
                     "Acceso No Autorizado",
                     f"El usuario '{u_nom} {u_ape}' tiene rol '{rol_detectado}'.\n"
@@ -170,8 +175,8 @@ def pedir_login():
     btn_login = ttk.Button(cuerpo, text="Iniciar Sesión", style="BotonLogin.TButton", command=autenticar)
     btn_login.pack(fill="x", ipady=4)
 
-    # Accesos directos para facilitar la sustentación presencial
-    marco_rapido = ttk.LabelFrame(cuerpo, text="Cuentas configuradas (Acceso rápido):", padding=10)
+    # Accesos directos (solo ayuda visual para la demo: rellenan los campos al pulsarlos)
+    marco_rapido = ttk.LabelFrame(cuerpo, text="Cuentas de demostración (Acceso rápido):", padding=10)
     marco_rapido.pack(fill="x", pady=(20, 0))
 
     def cargar_cuenta(u, c):
@@ -197,7 +202,7 @@ def pedir_login():
     # Atajos de teclado con tecla Enter
     entrada_usuario.bind("<Return>", lambda e: entrada_contrasena.focus())
     entrada_contrasena.bind("<Return>", lambda e: autenticar())
-    entrada_contrasena.focus()
+    entrada_usuario.focus()
 
     ventana.mainloop()
     return usuario_autenticado if usuario_autenticado else None

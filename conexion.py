@@ -47,6 +47,16 @@ def obtener_sesion_actual():
     return dict(SESION_ACTUAL)
 
 
+def limpiar_sesion():
+    """
+    Restablece la sesión global a None (E14).
+    Se usa tras un login fallido o al cerrar sesión para no dejar privilegios residuales.
+    """
+    SESION_ACTUAL["user"] = None
+    SESION_ACTUAL["password"] = None
+    SESION_ACTUAL["rol"] = None
+
+
 def probar_conexion(usuario, contrasena):
     """
     Intenta autenticarse contra MariaDB con las credenciales dadas.
@@ -68,11 +78,15 @@ def probar_conexion(usuario, contrasena):
     return False, "No se pudo conectar al servidor."
 
 
-def obtener_conexion():
+def obtener_conexion(mostrar_error=True):
     """
     Abre y devuelve una conexión activa a la base de datos usando las credenciales de la sesión.
-    Si falla, muestra una alerta y retorna None.
+    Si falla, muestra una alerta (si mostrar_error=True) y retorna None.
     """
+    if not SESION_ACTUAL.get("user"):
+        if mostrar_error:
+            messagebox.showerror("Sesión no iniciada", "No hay una sesión activa. Inicia sesión nuevamente.")
+        return None
     try:
         conexion = mysql.connector.connect(
             host=DB_HOST,
@@ -82,15 +96,23 @@ def obtener_conexion():
             password=SESION_ACTUAL["password"],
             client_flags=[ClientFlag.FOUND_ROWS]
         )
+        if conexion.is_connected():
+            try:
+                cur_role = conexion.cursor()
+                cur_role.execute("SET ROLE ALL;")
+                cur_role.close()
+            except:
+                pass
         return conexion
     except Error as e:
-        messagebox.showerror(
-            "Error de conexión",
-            "No se pudo conectar a la base de datos MySQL.\n\n"
-            f"Usuario BD: {SESION_ACTUAL['user']}\n"
-            f"Detalle: {traducir_error(e)}\n\n"
-            "Verifique que XAMPP esté encendido y que el servicio MySQL esté activo."
-        )
+        if mostrar_error:
+            messagebox.showerror(
+                "Error de conexión",
+                "No se pudo conectar a la base de datos MySQL.\n\n"
+                f"Usuario BD: {SESION_ACTUAL['user']}\n"
+                f"Detalle: {traducir_error(e)}\n\n"
+                "Verifique que XAMPP esté encendido y que el servicio MySQL esté activo."
+            )
         return None
 
 
@@ -113,7 +135,7 @@ def consultar(sql, parametros=(), mostrar_error=True):
     Ejecuta una consulta SELECT parametrizada y retorna una lista de tuplas con los resultados.
     Si ocurre un error, muestra una alerta (si mostrar_error=True) y retorna una lista vacía.
     """
-    conexion = obtener_conexion()
+    conexion = obtener_conexion(mostrar_error)
     if conexion is None:
         return []
 
@@ -154,6 +176,29 @@ def ejecutar(sql, parametros=(), mostrar_error=True):
         cerrar_conexion(conexion, cursor)
 
 
+def ejecutar_seguro(sql, parametros=()):
+    """
+    Igual que ejecutar(), pero NO muestra alertas: retorna una tupla (filas_afectadas, error).
+    - Éxito: (rowcount, None)
+    - Fallo: (None, excepción mysql.connector.Error) para que el módulo decida el mensaje.
+    """
+    conexion = obtener_conexion()
+    if conexion is None:
+        return None, None
+
+    cursor = None
+    try:
+        cursor = conexion.cursor()
+        cursor.execute(sql, parametros)
+        conexion.commit()
+        return cursor.rowcount, None
+    except Error as e:
+        conexion.rollback()
+        return None, e
+    finally:
+        cerrar_conexion(conexion, cursor)
+
+
 def traducir_error(error):
     """Traduce los códigos de error técnicos de MariaDB/MySQL a mensajes claros en español."""
     codigo = getattr(error, "errno", None)
@@ -162,7 +207,7 @@ def traducir_error(error):
         return "Acceso denegado: Usuario o contraseña de MariaDB incorrectos."
     if codigo == 1044:
         return "Acceso denegado: El usuario no tiene permisos suficientes sobre la base de datos."
-    if codigo == 1142:
+    if codigo in (1142, 1370):
         return "Permiso denegado: El rol actual no tiene privilegios para realizar esta acción."
     if codigo == 1062:
         return "Ya existe un registro con ese mismo código, cédula o identificador (valor duplicado)."
@@ -170,6 +215,12 @@ def traducir_error(error):
         return "No se puede eliminar o modificar este registro porque otros datos dependen de él."
     if codigo == 1452:
         return "El valor relacionado (categoría, proveedor, bodega, etc.) no existe."
+    if codigo == 1406:
+        return "Dato demasiado largo: uno de los campos supera la longitud máxima permitida por la columna."
+    if codigo == 1264:
+        return "Valor numérico fuera de rango: el número ingresado es demasiado grande o pequeño para la columna."
+    if codigo in (1366, 1265):
+        return "Formato inválido: uno de los campos tiene un tipo de dato incorrecto."
     if codigo in (3819, 4025):
         return "El dato no cumple con una regla de validación de la base de datos (Check constraint)."
     if codigo == 1644:

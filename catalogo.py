@@ -17,19 +17,24 @@ Incluye:
      SP_ActualizarInventarioBodega(p_id_articulo, p_bodega_origen, p_bodega_destino, p_cantidad)
 """
 
-import tkinter as tk
 from tkinter import ttk, messagebox
 from decimal import Decimal
 # pyrefly: ignore[missing-import]
 from mysql.connector import Error
 
-from conexion import consultar, ejecutar, obtener_conexion, cerrar_conexion, traducir_error
+from conexion import (
+    consultar, ejecutar, ejecutar_seguro, obtener_conexion, cerrar_conexion, traducir_error
+)
 
 SIN_SELECCION = "(Ninguno)"
 
 
 def crear_tabla(padre, columnas, anchos=None, alto=12):
-    """Crea una tabla visual ttk.Treeview con su barra de desplazamiento vertical."""
+    """
+    Crea una tabla visual ttk.Treeview con barras de desplazamiento vertical y horizontal (E13).
+    Las columnas tienen ancho fijo (stretch=False) para que la barra horizontal permita
+    ver todas las columnas aunque la ventana sea pequeña.
+    """
     marco = ttk.Frame(padre)
     ids = [f"c{i}" for i in range(len(columnas))]
     tabla = ttk.Treeview(marco, columns=ids, show="headings", height=alto)
@@ -37,13 +42,17 @@ def crear_tabla(padre, columnas, anchos=None, alto=12):
     for i, titulo in enumerate(columnas):
         ancho = anchos[i] if anchos else 120
         tabla.heading(ids[i], text=titulo)
-        tabla.column(ids[i], width=ancho, minwidth=50, anchor="center")
+        tabla.column(ids[i], width=ancho, minwidth=50, anchor="center", stretch=False)
 
-    barra = ttk.Scrollbar(marco, orient="vertical", command=tabla.yview)
-    tabla.configure(yscrollcommand=barra.set)
+    barra_v = ttk.Scrollbar(marco, orient="vertical", command=tabla.yview)
+    barra_h = ttk.Scrollbar(marco, orient="horizontal", command=tabla.xview)
+    tabla.configure(yscrollcommand=barra_v.set, xscrollcommand=barra_h.set)
 
-    tabla.pack(side="left", fill="both", expand=True)
-    barra.pack(side="right", fill="y")
+    tabla.grid(row=0, column=0, sticky="nsew")
+    barra_v.grid(row=0, column=1, sticky="ns")
+    barra_h.grid(row=1, column=0, sticky="ew")
+    marco.rowconfigure(0, weight=1)
+    marco.columnconfigure(0, weight=1)
     return marco, tabla
 
 
@@ -208,12 +217,21 @@ def crear_pestana_productos(cuaderno, solo_lectura):
         if not seleccion:
             return
         vals = tabla.item(seleccion[0], "values")
+        txt_codigo.configure(state="normal")
         for campo, val in zip(campos, vals):
             poner_texto(campo, val)
+        # E6: El código (llave primaria) queda bloqueado mientras se edita un producto
+        txt_codigo.configure(state="readonly")
         if not vals[4]:
             cmb_categoria.set(SIN_SELECCION)
         if not vals[5]:
             cmb_proveedor.set(SIN_SELECCION)
+
+    def limpiar_productos():
+        """Limpia el formulario y vuelve a habilitar el campo Código para registrar uno nuevo."""
+        txt_codigo.configure(state="normal")
+        limpiar_campos(campos)
+        tabla.selection_remove(tabla.selection())
 
     def leer_formulario():
         codigo = leer_entero(txt_codigo.get(), "Código")
@@ -247,15 +265,23 @@ def crear_pestana_productos(cuaderno, solo_lectura):
             VALUES (%s, %s, %s, %s, %s, %s)
         """
         if ejecutar(sql, datos) is not None:
-            messagebox.showinfo("Éxito", "Producto registrado correctamente.")
+            messagebox.showinfo(
+                "Éxito",
+                "Producto registrado correctamente.\n"
+                "(El trigger trg_stock_inicial_bodega asignó el stock inicial a la Bodega 1)."
+            )
             cargar_datos()
-            limpiar_campos(campos)
+            limpiar_productos()
 
     def actualizar():
         """
         Actualiza el producto. Si el precio cambia, el trigger
         'trg_auditoria_precio_articulo' en MariaDB se encarga de guardar la auditoría.
+        Si la cantidad cambia, 'trg_sincronizar_stock_bodega' ajusta inventario_bodega.
         """
+        if not tabla.selection():
+            messagebox.showwarning("Seleccione", "Selecciona en la tabla el producto que deseas actualizar.")
+            return
         datos = leer_formulario()
         if datos is None:
             return
@@ -267,27 +293,60 @@ def crear_pestana_productos(cuaderno, solo_lectura):
                 id_categoria = %s, nit_proveedor = %s
             WHERE codigo = %s
         """
-        filas = ejecutar(sql, (nombre, precio, cantidad, id_categoria, nit_proveedor, codigo))
-        if filas is not None:
-            messagebox.showinfo(
-                "Éxito",
-                "Producto actualizado correctamente.\n"
-                "(Si el precio cambió, el trigger en MariaDB registró la auditoría automáticamente)."
-            )
-            cargar_datos()
+        filas, error = ejecutar_seguro(sql, (nombre, precio, cantidad, id_categoria, nit_proveedor, codigo))
+        if error is not None:
+            messagebox.showerror("No se pudo actualizar", traducir_error(error))
+            return
+        if filas is None:
+            return
+        # E6: Validar que realmente se afectó una fila
+        if filas <= 0:
+            messagebox.showwarning("Sin cambios", "No existe ningún producto con el código ingresado.")
+            return
+        messagebox.showinfo(
+            "Éxito",
+            "Producto actualizado correctamente.\n"
+            "(Si el precio cambió, el trigger en MariaDB registró la auditoría automáticamente)."
+        )
+        cargar_datos()
+        if tabla.exists(str(codigo)):
+            tabla.selection_set(str(codigo))
 
     def eliminar():
         codigo = leer_entero(txt_codigo.get(), "Código")
-        if codigo is None or not confirmar_eliminacion(f"el producto {codigo}"):
+        if codigo is None:
             return
-        if ejecutar("DELETE FROM productos WHERE codigo = %s", (codigo,)):
+        # E1: Un producto con ventas registradas NO puede eliminarse (FK ON DELETE RESTRICT)
+        ventas = consultar("SELECT COUNT(*) FROM transaccion WHERE producto_transaccion = %s", (codigo,))
+        if ventas and ventas[0][0] > 0:
+            messagebox.showwarning(
+                "Eliminación no permitida",
+                "No se puede eliminar el producto porque tiene ventas asociadas en el historial.\n\n"
+                f"Ventas registradas: {ventas[0][0]}"
+            )
+            return
+        if not confirmar_eliminacion(f"el producto {codigo}"):
+            return
+        filas, error = ejecutar_seguro("DELETE FROM productos WHERE codigo = %s", (codigo,))
+        if error is not None:
+            if getattr(error, "errno", None) == 1451:
+                messagebox.showwarning(
+                    "Eliminación no permitida",
+                    "No se puede eliminar el producto porque tiene ventas asociadas en el historial."
+                )
+            else:
+                messagebox.showerror("No se pudo eliminar", traducir_error(error))
+            return
+        if filas:
             messagebox.showinfo("Éxito", "Producto eliminado.")
             cargar_datos()
-            limpiar_campos(campos)
+            limpiar_productos()
+        elif filas == 0:
+            messagebox.showwarning("Sin cambios", "No existe ningún producto con el código ingresado.")
 
     tabla.bind("<<TreeviewSelect>>", al_seleccionar)
     crear_botones(panel, solo_lectura, agregar, actualizar, eliminar,
-                  lambda: limpiar_campos(campos), cargar_datos).pack(fill="x", pady=10)
+                  limpiar_productos, cargar_datos).pack(fill="x", pady=10)
     cargar_datos()
 
 
@@ -339,7 +398,19 @@ def crear_pestana_categorias(cuaderno, solo_lectura):
             cargar_datos()
 
     def eliminar():
-        if not txt_id.get() or not confirmar_eliminacion(f"la categoría '{txt_nombre.get()}'"):
+        if not txt_id.get():
+            messagebox.showwarning("Seleccione", "Selecciona una categoría de la tabla.")
+            return
+        # E9: Informar cuántos productos quedarán sin categoría (FK ON DELETE SET NULL)
+        res = consultar("SELECT COUNT(*) FROM productos WHERE id_categoria = %s", (txt_id.get(),))
+        total = res[0][0] if res else 0
+        mensaje = f"¿Seguro que deseas eliminar la categoría '{txt_nombre.get()}'?"
+        if total > 0:
+            mensaje = (
+                f"Esta categoría tiene {total} producto(s) vinculado(s). "
+                f"Quedarán sin categoría asignada.\n\n¿Desea continuar?"
+            )
+        if not messagebox.askyesno("Confirmar eliminación", mensaje):
             return
         if ejecutar("DELETE FROM categoria WHERE id_categoria = %s", (txt_id.get(),)):
             messagebox.showinfo("Éxito", "Categoría eliminada.")
@@ -378,32 +449,55 @@ def crear_pestana_proveedores(cuaderno, solo_lectura):
                 poner_texto(campo, valor)
             poner_texto(txt_nit, seleccion[0])
 
-    def agregar():
+    def leer_proveedor():
+        """E18: Todos los campos del proveedor son obligatorios (NIT, nombre, contacto y ciudad)."""
         nit = txt_nit.get().strip()
         nombre = txt_nombre.get().strip()
-        if not nit or not nombre:
-            messagebox.showwarning("Faltan datos", "NIT y Nombre son obligatorios.")
+        contacto = txt_contacto.get().strip()
+        ciudad = txt_ciudad.get().strip()
+        if not nit or not nombre or not contacto or not ciudad:
+            messagebox.showwarning("Faltan datos", "NIT, Nombre, Contacto y Ciudad son obligatorios.")
+            return None
+        return nit, nombre, contacto, ciudad
+
+    def agregar():
+        datos = leer_proveedor()
+        if datos is None:
             return
         if ejecutar("INSERT INTO proveedor (nit, nombre, contacto, ciudad) VALUES (%s, %s, %s, %s)",
-                    (nit, nombre, txt_contacto.get().strip(), txt_ciudad.get().strip())) is not None:
+                    datos) is not None:
             messagebox.showinfo("Éxito", "Proveedor registrado.")
             cargar_datos()
             limpiar_campos(campos)
 
     def actualizar():
-        nit = txt_nit.get().strip()
-        nombre = txt_nombre.get().strip()
-        if not nit or not nombre:
-            messagebox.showwarning("Faltan datos", "NIT y Nombre son obligatorios.")
+        datos = leer_proveedor()
+        if datos is None:
             return
-        if ejecutar("UPDATE proveedor SET nombre = %s, contacto = %s, ciudad = %s WHERE nit = %s",
-                    (nombre, txt_contacto.get().strip(), txt_ciudad.get().strip(), nit)):
+        nit, nombre, contacto, ciudad = datos
+        filas = ejecutar("UPDATE proveedor SET nombre = %s, contacto = %s, ciudad = %s WHERE nit = %s",
+                         (nombre, contacto, ciudad, nit))
+        if filas:
             messagebox.showinfo("Éxito", "Proveedor actualizado.")
             cargar_datos()
+        elif filas == 0:
+            messagebox.showwarning("Sin cambios", "No existe ningún proveedor con el NIT ingresado.")
 
     def eliminar():
         nit = txt_nit.get().strip()
-        if not nit or not confirmar_eliminacion(f"el proveedor {nit}"):
+        if not nit:
+            messagebox.showwarning("Seleccione", "Selecciona un proveedor de la tabla.")
+            return
+        # E9: Informar cuántos productos quedarán sin proveedor (FK ON DELETE SET NULL)
+        res = consultar("SELECT COUNT(*) FROM productos WHERE nit_proveedor = %s", (nit,))
+        total = res[0][0] if res else 0
+        mensaje = f"¿Seguro que deseas eliminar el proveedor {nit}?"
+        if total > 0:
+            mensaje = (
+                f"Este proveedor tiene {total} producto(s) vinculado(s). "
+                f"Quedarán sin proveedor asignado.\n\n¿Desea continuar?"
+            )
+        if not messagebox.askyesno("Confirmar eliminación", mensaje):
             return
         if ejecutar("DELETE FROM proveedor WHERE nit = %s", (nit,)):
             messagebox.showinfo("Éxito", "Proveedor eliminado.")
@@ -474,7 +568,26 @@ def crear_pestana_bodegas(cuaderno, solo_lectura):
             cargar_datos()
 
     def eliminar():
-        if not txt_id.get() or not confirmar_eliminacion(f"la bodega '{txt_nombre.get()}'"):
+        if not txt_id.get():
+            messagebox.showwarning("Seleccione", "Selecciona una bodega de la tabla.")
+            return
+        # E8: No se permite borrar una bodega que aún tiene existencias
+        res = consultar(
+            "SELECT IFNULL(SUM(stock_actual), 0), COUNT(*) FROM inventario_bodega "
+            "WHERE id_bodega = %s AND stock_actual > 0",
+            (txt_id.get(),)
+        )
+        unidades = int(res[0][0]) if res else 0
+        if unidades > 0:
+            messagebox.showwarning(
+                "Bodega con existencias",
+                f"La bodega '{txt_nombre.get()}' todavía tiene {unidades} unidad(es) en "
+                f"{res[0][1]} producto(s).\n\n"
+                "Primero transfiere el inventario a otra bodega desde la pestaña "
+                "'Stock en Bodegas' (SP_ActualizarInventarioBodega)."
+            )
+            return
+        if not confirmar_eliminacion(f"la bodega '{txt_nombre.get()}'"):
             return
         if ejecutar("DELETE FROM bodega WHERE id_bodega = %s", (txt_id.get(),)):
             messagebox.showinfo("Éxito", "Bodega eliminada.")
@@ -507,7 +620,7 @@ def crear_pestana_inventario(cuaderno, solo_lectura):
     txt_stock = crear_campo(form_stock, 2, "Stock actual:")
 
     # Formulario 2: Transferencia entre bodegas mediante SP_ActualizarInventarioBodega
-    form_transf = ttk.LabelFrame(panel_izq, text="Transferir con SP_ActualizarInventarioBodega", padding=10)
+    form_transf = ttk.LabelFrame(panel_izq, text="Transferir (SP_ActualizarInventarioBodega)", padding=10)
     form_transf.pack(fill="x", pady=(12, 0))
 
     cmb_tr_prod = crear_campo(form_transf, 0, "Producto:", tipo="combo")
@@ -544,29 +657,71 @@ def crear_pestana_inventario(cuaderno, solo_lectura):
         cargar_combos()
 
     def guardar_stock():
+        """
+        Asigna el stock de un producto en una bodega y recalcula productos.cantidad_disponible
+        como la SUMA de todas sus bodegas (E4: inventario sincronizado) en una sola transacción.
+        """
         id_art = id_desde_combo(cmb_prod.get())
         id_b = id_desde_combo(cmb_bod.get())
-        cant = leer_entero(txt_stock.get(), "Stock actual")
-        if id_art is None or id_b is None or cant is None:
+        if id_art is None or id_b is None:
+            messagebox.showwarning("Campos incompletos", "Selecciona el producto y la bodega.")
             return
-        sql = """
-            INSERT INTO inventario_bodega (id_articulo, id_bodega, stock_actual)
-            VALUES (%s, %s, %s)
-            ON DUPLICATE KEY UPDATE stock_actual = %s
-        """
-        if ejecutar(sql, (id_art, id_b, cant, cant)) is not None:
-            messagebox.showinfo("Éxito", "Stock registrado en la bodega.")
+        cant = leer_entero(txt_stock.get(), "Stock actual")
+        if cant is None:
+            return
+        if cant < 0:
+            messagebox.showwarning("Dato Inválido", "El stock no puede ser negativo.")
+            return
+
+        con = obtener_conexion()
+        if not con:
+            return
+        cur = None
+        try:
+            cur = con.cursor()
+            cur.execute(
+                """
+                INSERT INTO inventario_bodega (id_articulo, id_bodega, stock_actual)
+                VALUES (%s, %s, %s)
+                ON DUPLICATE KEY UPDATE stock_actual = %s
+                """,
+                (id_art, id_b, cant, cant)
+            )
+            cur.execute("SELECT IFNULL(SUM(stock_actual), 0) FROM inventario_bodega WHERE id_articulo = %s", (id_art,))
+            total = int(cur.fetchone()[0])
+            # La bandera evita que trg_sincronizar_stock_bodega vuelva a ajustar las bodegas
+            cur.execute("SET @sync_desde_bodega = 1")
+            cur.execute("UPDATE productos SET cantidad_disponible = %s WHERE codigo = %s", (total, id_art))
+            cur.execute("SET @sync_desde_bodega = 0")
+            con.commit()
+            messagebox.showinfo(
+                "Éxito",
+                f"Stock registrado en la bodega.\nCantidad total del producto sincronizada: {total} unidades."
+            )
             cargar_datos()
+        except Error as e:
+            con.rollback()
+            messagebox.showerror("No se pudo guardar", traducir_error(e))
+        finally:
+            cerrar_conexion(con, cur)
 
     def ejecutar_transferencia():
         """Llama al procedimiento almacenado SP_ActualizarInventarioBodega."""
         id_art = id_desde_combo(cmb_tr_prod.get())
         id_orig = id_desde_combo(cmb_tr_orig.get())
         id_dest = id_desde_combo(cmb_tr_dest.get())
-        cant = leer_entero(txt_tr_cant.get(), "Cantidad")
 
-        if not id_art or not id_orig or not id_dest or cant is None:
+        if not id_art or not id_orig or not id_dest or not txt_tr_cant.get().strip():
             messagebox.showwarning("Campos incompletos", "Diligencia todos los campos de la transferencia.")
+            return
+
+        cant = leer_entero(txt_tr_cant.get(), "Cantidad")
+        if cant is None:
+            return
+
+        # E11: La cantidad a transferir debe ser un entero estrictamente mayor que cero
+        if cant <= 0:
+            messagebox.showwarning("Cantidad inválida", "La cantidad a transferir debe ser un número entero mayor que cero.")
             return
 
         if id_orig == id_dest:
@@ -592,7 +747,7 @@ def crear_pestana_inventario(cuaderno, solo_lectura):
     # Botones
     if not solo_lectura:
         ttk.Button(form_stock, text="Guardar Stock", style="Exito.TButton", command=guardar_stock).grid(row=3, column=0, columnspan=2, sticky="ew", pady=6)
-        ttk.Button(form_transf, text="EJECUTAR SP_ActualizarInventarioBodega", style="Primario.TButton", command=ejecutar_transferencia).grid(row=4, column=0, columnspan=2, sticky="ew", pady=6)
+        ttk.Button(form_transf, text="Transferir (SP)", style="Primario.TButton", command=ejecutar_transferencia).grid(row=4, column=0, columnspan=2, sticky="ew", pady=6)
 
     ttk.Button(panel_izq, text="Recargar inventario", command=cargar_datos).pack(fill="x", pady=10)
     cargar_datos()

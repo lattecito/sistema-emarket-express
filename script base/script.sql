@@ -4,6 +4,9 @@
 -- SCRIPT SQL CONSOLIDADO (DDL, DML, TRIGGERS, PROCEDIMIENTOS, VISTAS Y ROLES)
 -- =============================================================================
 
+-- E24: Garantiza el soporte correcto de tildes, eñes y caracteres especiales
+SET NAMES utf8mb4;
+
 DROP DATABASE IF EXISTS parcial;
 CREATE DATABASE parcial CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 USE parcial;
@@ -99,7 +102,7 @@ CREATE TABLE pedido (
 
 -- 1.9 Tabla: transaccion (Detalle del pedido)
 CREATE TABLE transaccion (
-    id_transaccion INT(11) NOT NULL,
+    id_transaccion INT(11) NOT NULL AUTO_INCREMENT,
     cantidad_vendida INT(11) NOT NULL,
     precio_unitario_real DECIMAL(10,2) NOT NULL,
     pedido_transaccion INT(11) NOT NULL,
@@ -107,7 +110,8 @@ CREATE TABLE transaccion (
     PRIMARY KEY (id_transaccion),
     CONSTRAINT chk_cantidad_positiva CHECK (cantidad_vendida > 0),
     CONSTRAINT fk_transaccion_pedido FOREIGN KEY (pedido_transaccion) REFERENCES pedido(id_pedido) ON UPDATE CASCADE ON DELETE CASCADE,
-    CONSTRAINT fk_transaccion_producto FOREIGN KEY (producto_transaccion) REFERENCES productos(codigo) ON UPDATE CASCADE ON DELETE CASCADE
+    -- E1: RESTRICT impide borrar productos que ya tienen ventas registradas en el historial
+    CONSTRAINT fk_transaccion_producto FOREIGN KEY (producto_transaccion) REFERENCES productos(codigo) ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 1.10 Tabla: factura_pago (Pasarela de pagos)
@@ -193,13 +197,20 @@ INSERT INTO bodega (id_bodega, nombre, ubicacion) VALUES
 (3, 'Bodega E-Market Satélite', 'Anillo Vial Km 2');
 
 -- Stock inicial en Bodegas
+-- E4: La suma del stock de todas las bodegas coincide EXACTAMENTE con
+--     productos.cantidad_disponible (inventario sincronizado).
 INSERT INTO inventario_bodega (id_articulo, id_bodega, stock_actual) VALUES 
-(1100, 1, 12),
+(1100, 1, 11),
 (1100, 2, 8),
 (1101, 1, 6),
 (1101, 3, 4),
 (1102, 1, 10),
-(1102, 2, 5);
+(1102, 2, 5),
+(1103, 1, 8),
+(1104, 1, 23),
+(1105, 1, 15),
+(1107, 1, 9),
+(2000, 1, 11);
 
 -- Pedidos históricos
 INSERT INTO pedido (id_pedido, fecha_transaccion, usuario_pedido, total, estado_pedido) VALUES 
@@ -269,6 +280,72 @@ BEGIN
     END IF;
 END //
 
+-- Trigger 3 (E4): Registrar en la Bodega 1 (predeterminada) el stock inicial de un producto nuevo
+DROP TRIGGER IF EXISTS trg_stock_inicial_bodega //
+CREATE TRIGGER trg_stock_inicial_bodega
+AFTER INSERT ON productos
+FOR EACH ROW
+BEGIN
+    IF NEW.cantidad_disponible > 0 AND EXISTS (SELECT 1 FROM bodega WHERE id_bodega = 1) THEN
+        INSERT INTO inventario_bodega (id_articulo, id_bodega, stock_actual)
+        VALUES (NEW.codigo, 1, NEW.cantidad_disponible)
+        ON DUPLICATE KEY UPDATE stock_actual = stock_actual + NEW.cantidad_disponible;
+    END IF;
+END //
+
+-- Trigger 4 (E4): Sincronizar inventario_bodega cada vez que cambie productos.cantidad_disponible
+--   * Si el stock AUMENTA (devoluciones / reintegros / ajuste manual): se suma a la Bodega 1.
+--   * Si el stock DISMINUYE (ventas): se descuenta primero de la Bodega 1 y,
+--     si no alcanza, de las demás bodegas en orden ascendente.
+--   * La variable de sesión @sync_desde_bodega = 1 evita el doble ajuste cuando la
+--     aplicación recalcula productos a partir de inventario_bodega.
+DROP TRIGGER IF EXISTS trg_sincronizar_stock_bodega //
+CREATE TRIGGER trg_sincronizar_stock_bodega
+AFTER UPDATE ON productos
+FOR EACH ROW
+BEGIN
+    DECLARE v_diferencia INT DEFAULT 0;
+    DECLARE v_restante INT DEFAULT 0;
+    DECLARE v_bodega INT DEFAULT NULL;
+    DECLARE v_stock_bodega INT DEFAULT 0;
+    DECLARE v_descuento INT DEFAULT 0;
+
+    IF IFNULL(@sync_desde_bodega, 0) = 0
+       AND OLD.cantidad_disponible <> NEW.cantidad_disponible THEN
+
+        SET v_diferencia = NEW.cantidad_disponible - OLD.cantidad_disponible;
+
+        IF v_diferencia > 0 THEN
+            IF EXISTS (SELECT 1 FROM bodega WHERE id_bodega = 1) THEN
+                INSERT INTO inventario_bodega (id_articulo, id_bodega, stock_actual)
+                VALUES (NEW.codigo, 1, v_diferencia)
+                ON DUPLICATE KEY UPDATE stock_actual = stock_actual + v_diferencia;
+            END IF;
+        ELSE
+            SET v_restante = -v_diferencia;
+            descontar: WHILE v_restante > 0 DO
+                SET v_bodega = NULL;
+                SELECT id_bodega, stock_actual INTO v_bodega, v_stock_bodega
+                FROM inventario_bodega
+                WHERE id_articulo = NEW.codigo AND stock_actual > 0
+                ORDER BY (id_bodega = 1) DESC, id_bodega ASC
+                LIMIT 1;
+
+                IF v_bodega IS NULL THEN
+                    LEAVE descontar;
+                END IF;
+
+                SET v_descuento = LEAST(v_stock_bodega, v_restante);
+                UPDATE inventario_bodega
+                SET stock_actual = stock_actual - v_descuento
+                WHERE id_articulo = NEW.codigo AND id_bodega = v_bodega;
+
+                SET v_restante = v_restante - v_descuento;
+            END WHILE descontar;
+        END IF;
+    END IF;
+END //
+
 DELIMITER ;
 
 
@@ -293,6 +370,15 @@ BEGIN
         ROLLBACK;
         RESIGNAL;
     END;
+
+    -- E11: Validaciones estrictas de entrada antes de iniciar la transacción
+    IF p_cantidad IS NULL OR p_cantidad <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Error: La cantidad a transferir debe ser un entero mayor que cero.';
+    END IF;
+
+    IF p_bodega_origen = p_bodega_destino THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Error: La bodega de origen y la de destino deben ser distintas.';
+    END IF;
 
     START TRANSACTION;
     
@@ -335,7 +421,6 @@ BEGIN
     DECLARE v_cantidad INT;
     DECLARE v_precio DECIMAL(10,2);
     DECLARE v_stock INT;
-    DECLARE v_next_trans_id INT;
 
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
@@ -398,11 +483,11 @@ BEGIN
 
         SELECT precio_unitario INTO v_precio FROM productos WHERE codigo = v_codigo;
 
-        SELECT IFNULL(MAX(id_transaccion), 100) + 1 INTO v_next_trans_id FROM transaccion;
+        -- E22: id_transaccion se genera con AUTO_INCREMENT (sin MAX()+1)
+        INSERT INTO transaccion (cantidad_vendida, precio_unitario_real, pedido_transaccion, producto_transaccion)
+        VALUES (v_cantidad, v_precio, v_nuevo_pedido_id, v_codigo);
 
-        INSERT INTO transaccion (id_transaccion, cantidad_vendida, precio_unitario_real, pedido_transaccion, producto_transaccion)
-        VALUES (v_next_trans_id, v_cantidad, v_precio, v_nuevo_pedido_id, v_codigo);
-
+        -- E4: el trigger trg_sincronizar_stock_bodega descuenta también de inventario_bodega (Bodega 1 primero)
         UPDATE productos 
         SET cantidad_disponible = cantidad_disponible - v_cantidad 
         WHERE codigo = v_codigo;
@@ -433,7 +518,6 @@ BEGIN
     DECLARE v_cantidad INT;
     DECLARE v_precio DECIMAL(10,2);
     DECLARE v_stock INT;
-    DECLARE v_next_trans_id INT;
     DECLARE v_existe_pedido INT DEFAULT 0;
 
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
@@ -518,10 +602,9 @@ BEGIN
 
         SELECT precio_unitario INTO v_precio FROM productos WHERE codigo = v_codigo;
 
-        SELECT IFNULL(MAX(id_transaccion), 100) + 1 INTO v_next_trans_id FROM transaccion;
-
-        INSERT INTO transaccion (id_transaccion, cantidad_vendida, precio_unitario_real, pedido_transaccion, producto_transaccion)
-        VALUES (v_next_trans_id, v_cantidad, v_precio, p_id_pedido, v_codigo);
+        -- E22: id_transaccion se genera con AUTO_INCREMENT (sin MAX()+1)
+        INSERT INTO transaccion (cantidad_vendida, precio_unitario_real, pedido_transaccion, producto_transaccion)
+        VALUES (v_cantidad, v_precio, p_id_pedido, v_codigo);
 
         UPDATE productos 
         SET cantidad_disponible = cantidad_disponible - v_cantidad 
