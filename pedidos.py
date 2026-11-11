@@ -25,6 +25,7 @@ from mysql.connector import Error
 
 from conexion import consultar, ejecutar, obtener_conexion, cerrar_conexion, traducir_error
 from clientes import abrir_dialogo_nuevo_cliente, abrir_dialogo_gestionar_clientes, eliminar_cliente_db
+from estilos import FUENTE
 
 METODOS_PAGO = ("Tarjeta", "PSE", "Efectivo")
 ESTADOS_PEDIDO = ("pendiente", "enviado", "entregado")
@@ -36,7 +37,7 @@ def formato_dinero(valor):
 
 
 def crear_tabla(padre, columnas, anchos=None, alto=12):
-    """Crea una tabla visual ttk.Treeview con su barra de desplazamiento vertical."""
+    """Crea una tabla visual ttk.Treeview con barras de desplazamiento vertical y horizontal (E13)."""
     marco = ttk.Frame(padre)
     ids = [f"c{i}" for i in range(len(columnas))]
     tabla = ttk.Treeview(marco, columns=ids, show="headings", height=alto)
@@ -44,13 +45,17 @@ def crear_tabla(padre, columnas, anchos=None, alto=12):
     for i, titulo in enumerate(columnas):
         ancho = anchos[i] if anchos else 120
         tabla.heading(ids[i], text=titulo)
-        tabla.column(ids[i], width=ancho, minwidth=50, anchor="center")
+        tabla.column(ids[i], width=ancho, minwidth=50, anchor="center", stretch=False)
 
-    barra = ttk.Scrollbar(marco, orient="vertical", command=tabla.yview)
-    tabla.configure(yscrollcommand=barra.set)
+    barra_v = ttk.Scrollbar(marco, orient="vertical", command=tabla.yview)
+    barra_h = ttk.Scrollbar(marco, orient="horizontal", command=tabla.xview)
+    tabla.configure(yscrollcommand=barra_v.set, xscrollcommand=barra_h.set)
 
-    tabla.pack(side="left", fill="both", expand=True)
-    barra.pack(side="right", fill="y")
+    tabla.grid(row=0, column=0, sticky="nsew")
+    barra_v.grid(row=0, column=1, sticky="ns")
+    barra_h.grid(row=1, column=0, sticky="ew")
+    marco.rowconfigure(0, weight=1)
+    marco.columnconfigure(0, weight=1)
     return marco, tabla
 
 
@@ -112,22 +117,19 @@ def procesar_pedido_transaccional_directo(conexion, id_usuario, carrito, metodo_
                 "precio": precio
             })
 
-        # 2. Insertar UNA ÚNICA cabecera de pedido para toda la compra
+        # 2. Insertar UNA ÚNICA cabecera de pedido para toda la compra (E21: sin truncar decimales)
         cursor.execute(
             "INSERT INTO pedido (fecha_transaccion, usuario_pedido, total, estado_pedido) VALUES (CURDATE(), %s, %s, 'pendiente');",
-            (id_usuario, int(total))
+            (id_usuario, total)
         )
         id_pedido = cursor.lastrowid
 
-        # 3. Insertar cada producto como detalle en transaccion y descontar del inventario
+        # 3. Insertar cada producto como detalle en transaccion (AUTO_INCREMENT - E22) y descontar del inventario
         for item in items_validados:
-            cursor.execute("SELECT IFNULL(MAX(id_transaccion), 100) + 1 FROM transaccion;")
-            next_trans_id = cursor.fetchone()[0]
-
             cursor.execute(
-                "INSERT INTO transaccion (id_transaccion, cantidad_vendida, precio_unitario_real, pedido_transaccion, producto_transaccion) "
-                "VALUES (%s, %s, %s, %s, %s);",
-                (next_trans_id, item["cantidad"], item["precio"], id_pedido, item["codigo"])
+                "INSERT INTO transaccion (cantidad_vendida, precio_unitario_real, pedido_transaccion, producto_transaccion) "
+                "VALUES (%s, %s, %s, %s);",
+                (item["cantidad"], item["precio"], id_pedido, item["codigo"])
             )
 
             cursor.execute(
@@ -270,15 +272,15 @@ def mostrar_factura_pedido(id_pedido, ventana_padre=None):
 
     top = tk.Toplevel(ventana_padre)
     top.title(f"Factura de Venta - Pedido N° {id_ped}")
-    top.geometry("740x620")
-    top.minsize(680, 500)
+    top.geometry("720x580")
+    top.minsize(560, 440)
     top.grab_set()
 
     # Encabezado institucional
     encabezado = ttk.Frame(top, padding=(16, 12))
     encabezado.pack(fill="x")
 
-    lbl_empresa = ttk.Label(encabezado, text="E-MARKET EXPRESS S.A.S.", font=("Segoe UI", 16, "bold"), foreground="#1e3a5f")
+    lbl_empresa = ttk.Label(encabezado, text="E-MARKET EXPRESS S.A.S.", font=(FUENTE, 16, "bold"), foreground="#1e3a5f")
     lbl_empresa.pack(anchor="w")
     ttk.Label(encabezado, text="NIT: 900.123.456-1 | Régimen Común | Facturación Transaccional", foreground="#5a6b7d").pack(anchor="w")
 
@@ -290,7 +292,7 @@ def mostrar_factura_pedido(id_pedido, ventana_padre=None):
 
     col1 = ttk.Frame(info_frame)
     col1.pack(side="left", fill="both", expand=True)
-    ttk.Label(col1, text=f"Cliente: {cliente}", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=2)
+    ttk.Label(col1, text=f"Cliente: {cliente}", font=(FUENTE, 10, "bold")).pack(anchor="w", pady=2)
     ttk.Label(col1, text=f"Cédula / NIT: {cedula}").pack(anchor="w", pady=2)
     ttk.Label(col1, text=f"Correo: {correo}").pack(anchor="w", pady=2)
     ttk.Label(col1, text=f"Teléfono: {telefono}").pack(anchor="w", pady=2)
@@ -298,7 +300,7 @@ def mostrar_factura_pedido(id_pedido, ventana_padre=None):
     col2 = ttk.Frame(info_frame)
     col2.pack(side="right", fill="both", expand=True)
     factura_texto = f"N° Factura: {id_factura}" if str(id_factura) != "Sin registrar" else "Factura: Pendiente"
-    ttk.Label(col2, text=factura_texto, font=("Segoe UI", 11, "bold"), foreground="#2e86de").pack(anchor="w", pady=2)
+    ttk.Label(col2, text=factura_texto, font=(FUENTE, 11, "bold"), foreground="#2e86de").pack(anchor="w", pady=2)
     ttk.Label(col2, text=f"N° Pedido: {id_ped} | Fecha Compra: {fecha_tx}").pack(anchor="w", pady=2)
     ttk.Label(col2, text=f"Método de Pago: {metodo}").pack(anchor="w", pady=2)
     ttk.Label(col2, text=f"Estado Pago: {est_pago} | Estado Pedido: {str(est_ped).capitalize()}").pack(anchor="w", pady=2)
@@ -321,7 +323,7 @@ def mostrar_factura_pedido(id_pedido, ventana_padre=None):
     pie = ttk.Frame(top, padding=(16, 12))
     pie.pack(fill="x")
 
-    lbl_pie_total = ttk.Label(pie, text=f"TOTAL FACTURADO: {formato_dinero(total)}", font=("Segoe UI", 14, "bold"), foreground="#27ae60")
+    lbl_pie_total = ttk.Label(pie, text=f"TOTAL FACTURADO: {formato_dinero(total)}", font=(FUENTE, 14, "bold"), foreground="#27ae60")
     lbl_pie_total.pack(side="left")
 
     btn_cerrar = ttk.Button(pie, text="Cerrar", command=top.destroy)
@@ -381,15 +383,12 @@ def procesar_modificacion_pedido_transaccional_directo(conexion, id_pedido, id_u
         # 3. Eliminar los detalles anteriores de la tabla transaccion
         cursor.execute("DELETE FROM transaccion WHERE pedido_transaccion = %s;", (id_pedido,))
 
-        # 4. Insertar los nuevos detalles y descontar del inventario
+        # 4. Insertar los nuevos detalles (AUTO_INCREMENT - E22) y descontar del inventario
         for item in items_validados:
-            cursor.execute("SELECT IFNULL(MAX(id_transaccion), 100) + 1 FROM transaccion;")
-            next_trans_id = cursor.fetchone()[0]
-
             cursor.execute(
-                "INSERT INTO transaccion (id_transaccion, cantidad_vendida, precio_unitario_real, pedido_transaccion, producto_transaccion) "
-                "VALUES (%s, %s, %s, %s, %s);",
-                (next_trans_id, item["cantidad"], item["precio"], id_pedido, item["codigo"])
+                "INSERT INTO transaccion (cantidad_vendida, precio_unitario_real, pedido_transaccion, producto_transaccion) "
+                "VALUES (%s, %s, %s, %s);",
+                (item["cantidad"], item["precio"], id_pedido, item["codigo"])
             )
 
             cursor.execute(
@@ -397,10 +396,10 @@ def procesar_modificacion_pedido_transaccional_directo(conexion, id_pedido, id_u
                 (item["cantidad"], item["codigo"])
             )
 
-        # 5. Actualizar cabecera del pedido
+        # 5. Actualizar cabecera del pedido (E21: sin truncar decimales)
         cursor.execute(
             "UPDATE pedido SET total = %s, usuario_pedido = %s WHERE id_pedido = %s;",
-            (int(total), id_usuario, id_pedido)
+            (total, id_usuario, id_pedido)
         )
 
         # 6. Actualizar la factura existente vinculada al pedido
@@ -486,7 +485,7 @@ def crear_modulo_pedidos(padre):
 
     carrito = []
     productos_info = {}
-    estado_edicion = {"id_pedido": None}
+    estado_edicion = {"id_pedido": None, "cantidades_originales": {}}
 
     contenedor = ttk.Frame(padre, padding=10)
     contenedor.pack(fill="both", expand=True)
@@ -497,11 +496,11 @@ def crear_modulo_pedidos(padre):
     derecha.pack(side="left", fill="both", expand=True)
 
     # Banner visual de Modo Edición (oculto por defecto)
-    marco_banner_edicion = ttk.LabelFrame(izquierda, text="Modo de Edición de Pedido Activo", padding=8)
+    marco_banner_edicion = ttk.LabelFrame(izquierda, text="Modo de Edición Activo", padding=6)
     lbl_banner_edicion = ttk.Label(
         marco_banner_edicion,
         text="",
-        font=("Segoe UI", 9, "bold"),
+        font=(FUENTE, 9, "bold"),
         foreground="#c0392b"
     )
     lbl_banner_edicion.pack(fill="x")
@@ -605,58 +604,76 @@ def crear_modulo_pedidos(padre):
     spn_cantidad.grid(row=0, column=3, padx=5)
     spn_cantidad.set(1)
 
-    # 3. Carrito temporal
+    # 3. Carrito temporal + barra inferior fija (E2: pack side="bottom" ANTES del carrito)
+    marco_acciones_compra = ttk.Frame(izquierda)
+    marco_acciones_compra.pack(side="bottom", fill="x", pady=(8, 0))
+
+    btn_accion_compra = ttk.Button(
+        marco_acciones_compra,
+        text="REGISTRAR PEDIDO",
+        style="Exito.TButton",
+        command=lambda: guardar_o_registrar()
+    )
+    btn_accion_compra.pack(side="left", fill="x", expand=True, ipady=6)
+
+    btn_cancelar_edicion = ttk.Button(
+        marco_acciones_compra,
+        text="Cancelar Edición",
+        style="Peligro.TButton",
+        command=lambda: cancelar_edicion()
+    )
+
     seccion_carrito = ttk.LabelFrame(izquierda, text="3. Resumen de la Venta (Carrito)", padding=10)
     seccion_carrito.pack(fill="both", expand=True)
 
     marco_carrito, tabla_carrito = crear_tabla(
         seccion_carrito,
         ("Código", "Producto", "Cantidad", "Precio Unitario", "Subtotal"),
-        (80, 180, 80, 120, 130),
-        alto=7
+        (75, 160, 75, 110, 120),
+        alto=5
     )
     marco_carrito.pack(fill="both", expand=True)
 
     barra_total = ttk.Frame(seccion_carrito)
-    barra_total.pack(fill="x", pady=(8, 0))
+    barra_total.pack(fill="x", pady=(6, 0))
     lbl_total = ttk.Label(barra_total, text="TOTAL: $ 0.00", style="Total.TLabel")
     lbl_total.pack(side="right")
 
     # 4. Historial consultando directamente la vista 'vista_pedidos_resumen'
-    seccion_historial = ttk.LabelFrame(derecha, text="Historial de Pedidos (Consultando vista_pedidos_resumen)", padding=10)
+    seccion_historial = ttk.LabelFrame(derecha, text="Historial de Pedidos (vista_pedidos_resumen)", padding=10)
     seccion_historial.pack(fill="both", expand=True)
 
     marco_historial, tabla_historial = crear_tabla(
         seccion_historial,
         ("N° Pedido", "Fecha", "Cliente", "Total", "Estado", "Método Pago", "Estado Pago"),
         (75, 90, 140, 100, 85, 95, 95),
-        alto=13
+        alto=12
     )
     marco_historial.pack(fill="both", expand=True)
 
-    # 5. Botones de acción sobre el pedido seleccionado en el historial
+    # 5. Botones de acción sobre el pedido seleccionado en el historial (E13: textos concisos)
     marco_acciones_pedidos = ttk.Frame(seccion_historial)
     marco_acciones_pedidos.pack(fill="x", pady=(8, 0))
 
     btn_ver_factura = ttk.Button(
         marco_acciones_pedidos,
-        text="Ver Factura con Productos",
+        text="Ver Factura",
         style="Primario.TButton",
         command=lambda: ver_factura_seleccionada()
     )
-    btn_ver_factura.pack(side="left", padx=(0, 6))
+    btn_ver_factura.pack(side="left", padx=(0, 5))
 
     btn_cargar_modificar = ttk.Button(
         marco_acciones_pedidos,
-        text="Cargar Pedido para Modificar",
+        text="Cargar Edición",
         command=lambda: cargar_pedido_para_modificar()
     )
-    btn_cargar_modificar.pack(side="left", padx=6)
+    btn_cargar_modificar.pack(side="left", padx=5)
 
     ttk.Button(
         marco_acciones_pedidos,
-        text="Recargar Historial",
-        command=lambda: cargar_historial_desde_vista()
+        text="Recargar",
+        command=lambda: recargar_todo()
     ).pack(side="right")
 
     # 6. Gestión logística de estados
@@ -668,23 +685,20 @@ def crear_modulo_pedidos(padre):
         marco_estado,
         state="readonly",
         values=ESTADOS_PEDIDO,
-        width=14
+        width=12
     )
     cmb_estado_pedido.pack(side="left", padx=5)
     cmb_estado_pedido.current(0)
 
     btn_actualizar_estado = ttk.Button(
         marco_estado,
-        text="Actualizar Estado del Pedido",
+        text="Actualizar Estado",
         command=lambda: actualizar_estado_pedido()
     )
     btn_actualizar_estado.pack(side="left", padx=5)
 
     lbl_pedido_sel = ttk.Label(marco_estado, text="Seleccione un pedido", foreground="#5a6b7d")
     lbl_pedido_sel.pack(side="right", padx=5)
-
-    barra_historial = ttk.Frame(seccion_historial)
-    barra_historial.pack(fill="x", pady=(4, 0))
 
     # --- Funciones de interacción ---
     def cargar_listas():
@@ -802,10 +816,21 @@ def crear_modulo_pedidos(padre):
         existente = next((i for i in carrito if i["codigo"] == codigo), None)
         cantidad_total = cantidad + (existente["cantidad"] if existente else 0)
 
-        if cantidad_total > stock:
+        # E3: En modo edición, el stock efectivo incluye las unidades del pedido original que se devolverán
+        cant_orig = (
+            estado_edicion["cantidades_originales"].get(codigo, 0)
+            if estado_edicion["id_pedido"] is not None else 0
+        )
+        stock_efectivo = stock + cant_orig
+
+        if cantidad_total > stock_efectivo:
+            detalle = (
+                f" (stock libre: {stock} + del pedido original: {cant_orig})"
+                if cant_orig > 0 else ""
+            )
             messagebox.showwarning(
                 "Stock Insuficiente",
-                f"Solo hay {stock} unidades disponibles de '{nombre}'."
+                f"Solo hay {stock_efectivo} unidades disponibles de '{nombre}'{detalle}."
             )
             return
 
@@ -892,6 +917,14 @@ def crear_modulo_pedidos(padre):
         (id_factura, id_ped, fecha_tx, metodo, est_pago, total, est_ped,
          id_usu, cliente, cedula, correo, telefono, fecha_pago) = datos
 
+        # E20: No se permite editar pedidos ya entregados
+        if str(est_ped).strip().lower() == "entregado":
+            messagebox.showwarning(
+                "Edición No Permitida",
+                f"El pedido N° {id_pedido} ya se encuentra en estado 'entregado' y no puede modificarse."
+            )
+            return
+
         # Seleccionar cliente en el combobox
         for opc in cmb_cliente["values"]:
             if opc.startswith(f"{id_usu} -"):
@@ -913,25 +946,28 @@ def crear_modulo_pedidos(padre):
             return
 
         carrito.clear()
+        estado_edicion["cantidades_originales"].clear()
         for cod, nom, cant, prec, subt in items:
+            cod_int = int(cod)
+            cant_int = int(cant)
             carrito.append({
-                "codigo": int(cod),
+                "codigo": cod_int,
                 "nombre": str(nom),
                 "precio": float(prec),
-                "cantidad": int(cant)
+                "cantidad": cant_int
             })
+            estado_edicion["cantidades_originales"][cod_int] = cant_int
 
         refrescar_carrito()
 
         # Activar modo edición en la interfaz
         estado_edicion["id_pedido"] = id_pedido
         lbl_banner_edicion.configure(
-            text=f"MODO EDICIÓN ACTIVO: Modificando Pedido N° {id_pedido} (Factura N° {id_factura})\n"
-                 f"Modifica productos en el carrito y presiona 'GUARDAR CAMBIOS'."
+            text=f"MODO EDICIÓN: Pedido N° {id_pedido} (Factura N° {id_factura}) — Modifica el carrito y pulsa 'GUARDAR CAMBIOS'."
         )
         marco_banner_edicion.pack(fill="x", pady=(0, 6), before=seccion_cliente)
         btn_accion_compra.configure(
-            text=f"GUARDAR CAMBIOS EN PEDIDO N° {id_pedido} (Actualizar Factura)",
+            text=f"GUARDAR CAMBIOS (Pedido #{id_pedido})",
             style="Primario.TButton"
         )
         btn_cancelar_edicion.pack(side="left", padx=(6, 0), ipady=6)
@@ -949,10 +985,11 @@ def crear_modulo_pedidos(padre):
     def cancelar_edicion():
         """Cancela el modo edición y retorna al modo de nueva venta."""
         estado_edicion["id_pedido"] = None
+        estado_edicion["cantidades_originales"].clear()
         marco_banner_edicion.pack_forget()
         btn_cancelar_edicion.pack_forget()
         btn_accion_compra.configure(
-            text="REGISTRAR PEDIDO (SP_RegistrarPedidoCompleto)",
+            text="REGISTRAR PEDIDO",
             style="Exito.TButton"
         )
         vaciar_carrito()
@@ -1004,35 +1041,22 @@ def crear_modulo_pedidos(padre):
         else:
             registrar_compra()
 
-    # Botones de acción
-    ttk.Button(seccion_productos, text="Agregar al Carrito", style="Primario.TButton",
-               command=agregar_al_carrito).grid(row=0, column=4, padx=(8, 0))
+    # Botones de acción en sección de productos y carrito (E13: textos claros y concisos)
+    ttk.Button(seccion_productos, text="Agregar", style="Primario.TButton",
+               command=agregar_al_carrito).grid(row=0, column=4, padx=(6, 0))
 
-    ttk.Button(barra_total, text="Quitar Seleccionado", command=quitar_del_carrito).pack(side="left")
+    ttk.Button(barra_total, text="Quitar", command=quitar_del_carrito).pack(side="left")
     ttk.Button(barra_total, text="Vaciar", command=vaciar_carrito).pack(side="left", padx=5)
 
-    marco_acciones_compra = ttk.Frame(izquierda)
-    marco_acciones_compra.pack(fill="x", pady=(10, 0))
-
-    btn_accion_compra = ttk.Button(
-        marco_acciones_compra,
-        text="REGISTRAR PEDIDO (SP_RegistrarPedidoCompleto)",
-        style="Exito.TButton",
-        command=guardar_o_registrar
-    )
-    btn_accion_compra.pack(side="left", fill="x", expand=True, ipady=6)
-
-    btn_cancelar_edicion = ttk.Button(
-        marco_acciones_compra,
-        text="Cancelar Edición",
-        style="Peligro.TButton",
-        command=cancelar_edicion
-    )
+    def recargar_todo():
+        """E12: Actualiza listas de clientes/productos e historial al cambiar de pestaña."""
+        cargar_listas()
+        cargar_historial_desde_vista()
 
     # Eventos de tabla
     tabla_historial.bind("<<TreeviewSelect>>", al_seleccionar_pedido)
     tabla_historial.bind("<Double-1>", lambda e: ver_factura_seleccionada())
 
-    # Carga inicial
-    cargar_listas()
-    cargar_historial_desde_vista()
+    # Carga inicial y retorno del callback para refresco automático desde main.py
+    recargar_todo()
+    return recargar_todo

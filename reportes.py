@@ -11,7 +11,6 @@ Requerimiento:
 - Muestra el registro histórico generado por el trigger 'trg_auditoria_precio_articulo'.
 """
 
-import tkinter as tk
 from tkinter import ttk
 from decimal import Decimal
 # pyrefly: ignore[missing-import]
@@ -26,7 +25,7 @@ COLORES_GRAFICOS = ["#2e86de", "#27ae60", "#f39c12", "#c0392b", "#8e44ad", "#16a
 
 
 def crear_tabla(padre, columnas, anchos=None, alto=12):
-    """Crea una tabla visual ttk.Treeview con su barra de desplazamiento vertical."""
+    """Crea una tabla visual ttk.Treeview con barras de desplazamiento vertical y horizontal (E13)."""
     marco = ttk.Frame(padre)
     ids = [f"c{i}" for i in range(len(columnas))]
     tabla = ttk.Treeview(marco, columns=ids, show="headings", height=alto)
@@ -34,13 +33,17 @@ def crear_tabla(padre, columnas, anchos=None, alto=12):
     for i, titulo in enumerate(columnas):
         ancho = anchos[i] if anchos else 120
         tabla.heading(ids[i], text=titulo)
-        tabla.column(ids[i], width=ancho, minwidth=50, anchor="center")
+        tabla.column(ids[i], width=ancho, minwidth=50, anchor="center", stretch=False)
 
-    barra = ttk.Scrollbar(marco, orient="vertical", command=tabla.yview)
-    tabla.configure(yscrollcommand=barra.set)
+    barra_v = ttk.Scrollbar(marco, orient="vertical", command=tabla.yview)
+    barra_h = ttk.Scrollbar(marco, orient="horizontal", command=tabla.xview)
+    tabla.configure(yscrollcommand=barra_v.set, xscrollcommand=barra_h.set)
 
-    tabla.pack(side="left", fill="both", expand=True)
-    barra.pack(side="right", fill="y")
+    tabla.grid(row=0, column=0, sticky="nsew")
+    barra_v.grid(row=0, column=1, sticky="ns")
+    barra_h.grid(row=1, column=0, sticky="ew")
+    marco.rowconfigure(0, weight=1)
+    marco.columnconfigure(0, weight=1)
     return marco, tabla
 
 
@@ -135,56 +138,78 @@ def crear_modulo_reportes(padre):
     cuaderno = ttk.Notebook(padre)
     cuaderno.pack(fill="both", expand=True, padx=5, pady=5)
 
+    recargadores = []
+
     # Vista 1: Ventas por categoría
-    crear_pestana_reporte(
+    recargadores.append(crear_pestana_reporte(
         cuaderno, "Ventas por Categoría",
         "Consulta directa a la vista 'vista_ventas_por_categoria'.",
         ("Categoría", "Cantidad Ventas", "Total Recaudado ($)"),
         (220, 160, 200),
         SQL_VISTA_CATEGORIAS
-    )
+    ))
 
     # Vista 2: Resumen integral de pedidos
-    crear_pestana_reporte(
+    recargadores.append(crear_pestana_reporte(
         cuaderno, "Resumen de Pedidos",
         "Consulta directa a la vista 'vista_pedidos_resumen'.",
         ("ID Pedido", "Cliente", "Fecha", "Total", "Estado Pedido", "Método Pago", "Estado Pago"),
         (80, 180, 100, 120, 110, 120, 120),
         SQL_VISTA_PEDIDOS_RESUMEN
-    )
+    ))
 
     # Vista 3: Análisis por estado del pedido
-    crear_pestana_reporte(
+    recargadores.append(crear_pestana_reporte(
         cuaderno, "Pedidos por Estado",
         "Agrupación de ventas calculada a partir de 'vista_pedidos_resumen'.",
         ("Estado del Pedido", "N° de Pedidos", "Total Facturado ($)"),
         (200, 150, 200),
         SQL_ESTADOS_DESDE_VISTA
-    )
+    ))
 
     # Vista 4: Análisis por método de pago
-    crear_pestana_reporte(
+    recargadores.append(crear_pestana_reporte(
         cuaderno, "Por Método de Pago",
         "Distribución de pagos calculada a partir de 'vista_pedidos_resumen'.",
         ("Método de Pago", "N° Transacciones", "Total Pagado ($)"),
         (200, 160, 200),
         SQL_METODOS_DESDE_VISTA
-    )
+    ))
 
     # Pestaña de bajo stock
-    crear_pestana_bajo_stock(cuaderno)
+    recargadores.append(crear_pestana_bajo_stock(cuaderno))
 
     # Pestaña de auditoría por trigger
-    crear_pestana_reporte(
+    recargadores.append(crear_pestana_reporte(
         cuaderno, "Auditoría por Trigger",
         "Historial registrado automáticamente por el trigger 'trg_auditoria_precio_articulo'.",
         ("ID", "Cód. Producto", "Nombre Producto", "Precio Anterior", "Precio Nuevo", "Fecha / Hora", "Usuario BD"),
         (60, 110, 180, 120, 120, 160, 180),
         SQL_AUDITORIA_TRIGGER
-    )
+    ))
 
     # Pestaña de gráficos con matplotlib
-    crear_pestana_graficos(cuaderno)
+    recargadores.append(crear_pestana_graficos(cuaderno))
+
+    def recargar_reportes():
+        """E19: Recarga automáticamente las vistas, tablas y gráficos."""
+        for fn in recargadores:
+            try:
+                fn()
+            except Exception:
+                pass
+
+    # También recargar la subpestaña activa al cambiar dentro del Notebook de reportes
+    def al_cambiar_subpestana(evento=None):
+        try:
+            idx = cuaderno.index(cuaderno.select())
+            if 0 <= idx < len(recargadores):
+                recargadores[idx]()
+        except Exception:
+            pass
+
+    cuaderno.bind("<<NotebookTabChanged>>", al_cambiar_subpestana)
+    return recargar_reportes
 
 
 def crear_pestana_reporte(cuaderno, titulo, descripcion, columnas, anchos, sql):
@@ -204,6 +229,7 @@ def crear_pestana_reporte(cuaderno, titulo, descripcion, columnas, anchos, sql):
 
     ttk.Button(pestana, text="Recargar reporte", style="Primario.TButton", command=recargar).pack(anchor="e", pady=(10, 0))
     recargar()
+    return recargar
 
 
 def crear_pestana_bajo_stock(cuaderno):
@@ -238,6 +264,7 @@ def crear_pestana_bajo_stock(cuaderno):
 
     ttk.Button(barra, text="Consultar", style="Primario.TButton", command=consultar_stock).pack(side="left", padx=5)
     consultar_stock()
+    return consultar_stock
 
 
 def crear_pestana_graficos(cuaderno):
@@ -311,3 +338,4 @@ def crear_pestana_graficos(cuaderno):
 
     ttk.Button(barra, text="Actualizar Gráficos", style="Exito.TButton", command=generar_graficos).pack(side="right")
     generar_graficos()
+    return generar_graficos

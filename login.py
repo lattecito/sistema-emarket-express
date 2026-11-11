@@ -48,11 +48,11 @@ def pedir_login():
     # Estilos visuales con ttk
     estilo = ttk.Style(ventana)
     estilo.theme_use("clam")
-    estilo.configure(".", font=("Segoe UI", 10), background="#f4f6f9")
+    estilo.configure(".", font=(FUENTE, 10), background="#f4f6f9")
     estilo.configure("Encabezado.TFrame", background="#1e3a5f")
-    estilo.configure("Encabezado.TLabel", background="#1e3a5f", foreground="white", font=("Segoe UI", 14, "bold"))
+    estilo.configure("Encabezado.TLabel", background="#1e3a5f", foreground="white", font=(FUENTE, 14, "bold"))
     estilo.configure("SubEncabezado.TLabel", background="#1e3a5f", foreground="#cfd8e3")
-    estilo.configure("BotonLogin.TButton", background="#2e86de", foreground="white", font=("Segoe UI", 10, "bold"), padding=6)
+    estilo.configure("BotonLogin.TButton", background="#2e86de", foreground="white", font=(FUENTE, 10, "bold"), padding=6)
     estilo.map("BotonLogin.TButton", background=[("active", "#1b6fc2")])
 
     # Banner superior

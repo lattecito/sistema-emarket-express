@@ -1,72 +1,91 @@
 # Sistema Integral E-Market Express
 
-Sistema de gestión comercial, inventario en bodegas y facturación transaccional desarrollado en **Python (Tkinter)** conectado a una base de datos **MariaDB / MySQL (XAMPP)**.
+Sistema integral de gestión comercial, control de inventario multi-bodega, facturación transaccional y analítica gerencial desarrollado en **Python (Tkinter)** sobre una base de datos **MariaDB / MySQL (XAMPP)**.
 
-Proyecto académico para el curso de **Bases de Datos** - Universidad de los Llanos.
-
----
-
-##  Características Principales
-
-- **Conexión Centralizada:** Manejo de sesiones y transacciones con `mysql-connector-python`.
-- **Autenticación por Roles en MariaDB:**
-  - `admin_db` (Rol **Administrador**): Acceso total al catálogo CRUD, transacciones, inventarios y reportes gerenciales.
-  - `cajero_app` (Rol **Cajero**): Acceso a transacciones de pedidos y consulta de catálogo en modo solo lectura.
-- **Transaccionalidad y Procedimientos Almacenados:**
-  - `SP_RegistrarPedidoCompleto`: Inserción atómica de cabecera de pedido, detalle de transacción, descuento de stock y emisión de factura única por compra.
-  - `SP_ModificarPedidoExistente`: Modificación atómica de pedidos existentes, reajuste de inventario y actualización automática de la factura de pago.
-  - `SP_ActualizarInventarioBodega`: Transferencia atómica de existencias entre bodegas.
-- **Facturación y Desglose de Productos:**
-  - Consulta interactiva de factura electrónica con desglose ítem por ítem para cada pedido.
-- **Gestión de Clientes (Administrador y Cajeros):**
-  - Creación y eliminación de clientes (`usuario` con `rol = 'Cliente'`) disponible en su pestaña dedicada y en la venta de pedidos (`+ Nuevo Cliente`).
-  - Validación de identificaciones únicas (Cédula y Correo electrónico).
-  - Protección de integridad referencial con `ON DELETE RESTRICT`: bloqueo de borrado de clientes con compras asociadas (Error 1451).
-- **Gestión de Seguridad y Cajeros (Exclusivo Administrador):**
-  - Creación y eliminación de operadores en la tabla `usuario` con `rol = 'Cajero'`.
-  - Autenticación y operación segura bajo el rol de base de datos `Cajero_App`.
-- **Triggers (Disparadores de Base de Datos):**
-  - `trg_auditoria_precio_articulo`: Registra cambios de precio de productos automáticamente en `auditoria_precio_articulo`.
-  - `trg_validar_stock_pedido`: Valida existencias antes de registrar transacciones.
-- **Vistas Analíticas y Reportes Estadísticos:**
-  - `vista_ventas_por_categoria` y `vista_pedidos_resumen`.
-  - Gráficos estadísticos interactivos con **matplotlib** incrustados en la interfaz Tkinter.
+Proyecto académico desarrollado para el curso de **Bases de Datos (Cód. 603401)** — **Universidad de los Llanos**.
 
 ---
 
-##  Estructura del Proyecto
+## Características Principales
+
+### 1. Conexión Centralizada y Control de Sesiones (`conexion.py`)
+- Gestión unificada de conexiones mediante `mysql-connector-python`, activación automática de roles (`SET ROLE ALL;`) y limpieza de sesión ante cierres o errores de autenticación.
+- Manejo transaccional explícito (`COMMIT` / `ROLLBACK`) y traducción centralizada de códigos de error de MariaDB/MySQL (1044, 1045, 1062, 1142, 1264, 1265, 1366, 1370, 1406, 1451, 1452, 1644, 3819, 4025).
+
+### 2. Autenticación Dual y Roles de Base de Datos (`login.py`, `main.py`)
+- **Acceso directo por credenciales de MariaDB**: `admin_db`, `cajero_app` o `root`.
+- **Acceso por tabla `usuario`**: autenticación mediante **Correo Electrónico o Cédula** y contraseña para usuarios con `rol = 'Administrador'` o `rol = 'Cajero'` (con campos limpios al inicio y botones visuales de acceso rápido para demostración).
+- **Segregación de interfaz por rol**:
+  - **Administrador (`Administrador_DB`)**: acceso completo a Catálogo y Bodegas (CRUD), Clientes, Pedidos y Transacciones, Reportes Gerenciales con gráficos y Gestión de Cajeros.
+  - **Cajero (`Cajero_App`)**: inicia directamente en **Pedidos y Transacciones**, con acceso a **Consulta de Catálogo** (solo lectura) y **Gestión de Clientes**, sin acceso ni visualización de módulos administrativos.
+
+### 3. Transaccionalidad, Procedimientos Almacenados y Triggers (`script base/script.sql`)
+- **Procedimientos almacenados transaccionales (`START TRANSACTION`, `COMMIT`, `ROLLBACK`)**:
+  - `SP_RegistrarPedidoCompleto`: valida existencias con bloqueo `FOR UPDATE`, inserta 1 cabecera en `pedido`, N ítems en `transaccion` (`AUTO_INCREMENT`), descuenta inventario y genera 1 factura en `factura_pago`.
+  - `SP_ModificarPedidoExistente`: reintegra existencias previas, valida el nuevo stock efectivo, reemplaza los detalles, recalcula el total y actualiza la factura vinculada (bloqueado en la UI si el pedido está en estado `entregado`).
+  - `SP_ActualizarInventarioBodega`: transfiere unidades entre bodegas validando `cantidad > 0`, bodegas distintas y stock suficiente en origen.
+- **Disparadores (Triggers)**:
+  - `trg_auditoria_precio_articulo`: registra automáticamente cualquier variación de `precio_unitario` en `auditoria_precio_articulo`.
+  - `trg_validar_stock_pedido`: valida existencias antes de insertar detalles en `transaccion`.
+  - `trg_stock_inicial_bodega`: asigna a la Bodega 1 (predeterminada) el stock inicial de todo producto nuevo.
+  - `trg_sincronizar_stock_bodega`: mantiene sincronizado `productos.cantidad_disponible` con `inventario_bodega` ante ventas, devoluciones o ajustes.
+
+### 4. Integridad Referencial y Validaciones de Negocio
+- **Productos y Catálogo (`catalogo.py`)**:
+  - `ON DELETE RESTRICT` en `fk_transaccion_producto`: impide eliminar productos que tengan ventas en el historial.
+  - Advertencia previa con conteo de productos vinculados al eliminar categorías o proveedores (`ON DELETE SET NULL`).
+  - Bloqueo de eliminación de bodegas que aún conserven existencias en `inventario_bodega`.
+  - Sincronización bidireccional de existencias entre bodegas y catálogo general.
+- **Clientes (`clientes.py`)**:
+  - Creación y eliminación de clientes (`usuario` con `rol = 'Cliente'`) tanto desde su pestaña dedicada como desde el modal rápido en ventas.
+  - Validación de longitudes, formato de correo y teléfono numérico (7 a 15 dígitos).
+  - `ON DELETE RESTRICT` en `fk_pedido_usuario`: bloquea la eliminación de clientes con pedidos registrados (Error 1451).
+- **Cajeros (`cajeros.py`)**:
+  - Administración exclusiva del Administrador sobre la tabla `usuario` (`WHERE rol = 'Cajero'`), sin ejecutar sentencias DDL en tiempo de ejecución.
+- **Pedidos y Facturación (`pedidos.py`)**:
+  - Edición de pedidos con cálculo de stock efectivo (`stock_libre + cantidad_original`), gestión logística de estados (`pendiente`, `enviado`, `entregado`), vista de factura detallada en ventana modal adaptable y barras de acción fijas.
+
+### 5. Vistas Analíticas, Reportes e Interfaz Multiplataforma (`reportes.py`, `estilos.py`)
+- Consultas directas a `vista_ventas_por_categoria` y `vista_pedidos_resumen`, auditoría de precios e inventario de bajo stock.
+- Tres gráficos estadísticos integrados con **Matplotlib** y recarga automática al cambiar de pestaña (`<<NotebookTabChanged>>`).
+- Tipografía adaptativa por sistema operativo en `estilos.py` y tablas `Treeview` con desplazamiento vertical y horizontal.
+
+---
+
+## Estructura del Proyecto
 
 ```text
-├── conexion.py          # Conexión centralizada a MariaDB y manejo de sesión
-├── login.py             # Ventana de autenticación de usuarios de base de datos
-├── main.py              # Ventana principal y control de navegación por roles
-├── catalogo.py          # Módulo CRUD de productos, categorías, proveedores y bodegas
-├── clientes.py          # Gestión de Clientes (Crear y Eliminar) para Administrador y Cajeros
-├── pedidos.py           # Módulo transaccional de ventas llamando a SP_RegistrarPedidoCompleto
-├── reportes.py          # Consultas a las vistas analíticas y gráficos con Matplotlib
-├── cajeros.py           # Módulo exclusivo de Administrador para crear y eliminar cajeros en MariaDB
-├── requirements.txt     # Librerías Python requeridas
+├── main.py              # Punto de entrada, barra de pestañas por rol y recarga automática
+├── login.py             # Autenticación (MariaDB y tabla usuario por correo/cédula)
+├── conexion.py          # Conexión centralizada, activación de roles y traductor de errores SQL
+├── estilos.py           # Configuración de fuentes multiplataforma compartida
+├── catalogo.py          # CRUD de productos, categorías, proveedores, bodegas y transferencias
+├── clientes.py          # Gestión de clientes (rol = 'Cliente') y modal rápido en ventas
+├── cajeros.py           # Gestión de cajeros (rol = 'Cajero' en usuario) exclusiva de Admin
+├── pedidos.py           # Ventas, edición de pedidos, estados logísticos y factura detallada
+├── reportes.py          # Vistas analíticas, auditoría por trigger y gráficos con Matplotlib
+├── requirements.txt     # Dependencias Python del proyecto
 ├── script base/
-│   └── script.sql       # Script SQL consolidado (DDL, DML, Triggers, SP, Vistas y Roles)
-└── .gitignore           # Exclusión de archivos binarios y temporales
+│   └── script.sql       # Script SQL consolidado (DDL 3FN, DML, Triggers, SP, Vistas y Roles)
+└── .gitignore           # Exclusión de cachés, binarios y archivos temporales
 ```
 
 ---
 
-##  Requisitos e Instalación
+## Requisitos e Instalación
 
 ### 1. Requisitos Previos
 - **Python 3.10 o superior**.
-- **XAMPP** con el servicio de MySQL / MariaDB activo.
+- **XAMPP** (u otro servidor **MariaDB / MySQL** compatible con roles y JSON).
 
 ### 2. Configuración de la Base de Datos
-1. Inicia **XAMPP** y activa el módulo **MySQL**.
-2. Abre phpMyAdmin o la consola de MySQL e importa el archivo:
+1. Inicia **XAMPP** y activa el servicio **MySQL**.
+2. Abre **phpMyAdmin** (o el cliente MySQL como `root`) e importa el archivo:
    `script base/script.sql`
-   *(Esto creará la base de datos `parcial`, las tablas, datos de prueba, procedimientos, triggers, vistas y usuarios `admin_db` y `cajero_app`).*
+   *(Crea la base de datos `parcial` con codificación `utf8mb4`, las 11 tablas en 3FN, datos iniciales, 4 triggers, 3 procedimientos almacenados, 2 vistas analíticas y los roles/usuarios `admin_db` y `cajero_app`).*
 
 ### 3. Instalación de Dependencias
-Abre una terminal en la carpeta del proyecto y ejecuta:
+En la carpeta raíz del proyecto, ejecuta:
 
 ```bash
 pip install -r requirements.txt
@@ -74,17 +93,17 @@ pip install -r requirements.txt
 
 ---
 
-##  Ejecución del Sistema
-
-Para iniciar la aplicación:
+## Ejecución del Sistema
 
 ```bash
 python main.py
 ```
 
-### Credenciales de Acceso:
-| Rol | Usuario MariaDB | Contraseña | Permisos |
+### Cuentas de Acceso Disponibles
+
+| Rol | Usuario / Correo | Contraseña | Alcance en el Sistema |
 | :--- | :--- | :--- | :--- |
-| **Administrador** | `admin_db` | `Admin2026*Seguro` | Acceso total (CRUD, Ventas, Reportes y Gráficos) |
-| **Cajero / Operador** | `cajero_app` | `Cajero2026*App` | Venta de pedidos y consulta de catálogo |
-| **Superusuario** | `root` | *(sin contraseña)* | Administrador general de XAMPP |
+| **Administrador (BD)** | `admin_db` | `Admin2026*Seguro` | Acceso total (Catálogo, Bodegas, Clientes, Pedidos, Reportes y Cajeros) |
+| **Cajero (BD)** | `cajero_app` | `Cajero2026*App` | Pedidos y ventas, consulta de catálogo y gestión de clientes |
+| **Cajero (Tabla `usuario`)** | `cajero1@emarket.com` | `Cajero2026*App` | Autenticación validada en tabla `usuario` operando bajo rol `Cajero_App` |
+| **Superusuario (XAMPP)** | `root` | *(sin contraseña)* | Administración total local |

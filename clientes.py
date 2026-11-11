@@ -17,41 +17,49 @@ from tkinter import ttk, messagebox
 from mysql.connector import Error
 
 from conexion import (
-    consultar, ejecutar, obtener_conexion, cerrar_conexion, traducir_error
+    consultar, ejecutar_seguro, obtener_conexion, cerrar_conexion, traducir_error
 )
+from estilos import FUENTE
+
+# E15: Teléfono con 7 a 15 dígitos numéricos (opcionalmente con un '+' inicial)
+PATRON_TELEFONO = re.compile(r"^\+?\d{7,15}$")
 
 
 def crear_cliente_db(cedula, nombre, apellido, correo, telefono):
     """
     Inserta un nuevo cliente en la tabla 'usuario' asignando rol = 'Cliente'.
-    Calcula id_usuario = MAX(id_usuario) + 1 para compatibilidad.
+    E10 / E22: Validación previa de longitudes y uso de AUTO_INCREMENT sin MAX()+1.
     Retorna (True, nuevo_id) o (False, mensaje_error).
     """
-    # Validar que cédula sea entero
+    # Validar que cédula sea entero positivo
     try:
-        cedula_int = int(cedula)
+        cedula_int = int(str(cedula).strip())
         if cedula_int <= 0:
             return False, "La cédula debe ser un número positivo."
     except ValueError:
         return False, "La cédula debe contener exclusivamente números."
 
-    # Validar nombres
-    if not nombre.strip():
+    # Validar nombres y longitudes
+    nom = nombre.strip()
+    ape = apellido.strip()
+    if not nom:
         return False, "El nombre del cliente no puede estar vacío."
-    if not apellido.strip():
+    if not ape:
         return False, "El apellido del cliente no puede estar vacío."
+    if len(nom) > 50 or len(ape) > 50:
+        return False, "El nombre y el apellido no pueden superar los 50 caracteres."
 
     # Validar correo
     correo_limpio = correo.strip().lower()
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", correo_limpio):
         return False, "Por favor ingresa un correo electrónico válido (ej: cliente@correo.com)."
+    if len(correo_limpio) > 50:
+        return False, "El correo electrónico no puede superar los 50 caracteres."
 
-    # Validar teléfono (compatible con VARCHAR(20) e INT)
-    tel_limpio = re.sub(r"[^\d+]", "", str(telefono).strip())
-    if not tel_limpio:
-        return False, "El teléfono no puede estar vacío y debe contener dígitos válidos."
-    if len(tel_limpio) > 20:
-        return False, "El teléfono no puede superar los 20 caracteres."
+    # E15: Validar teléfono (7 a 15 dígitos numéricos)
+    tel_limpio = re.sub(r"[\s\-()]", "", str(telefono).strip())
+    if not PATRON_TELEFONO.match(tel_limpio):
+        return False, "El teléfono debe contener entre 7 y 15 dígitos numéricos (ej: 31256234)."
 
     # Verificar si la cédula ya existe
     existe_cedula = consultar("SELECT id_usuario FROM usuario WHERE cedula = %s;", (cedula_int,), mostrar_error=False)
@@ -63,32 +71,18 @@ def crear_cliente_db(cedula, nombre, apellido, correo, telefono):
     if existe_correo:
         return False, f"Ya existe un cliente registrado con el correo '{correo_limpio}'."
 
-    # Obtener el siguiente ID de usuario disponible
-    fila_id = consultar("SELECT IFNULL(MAX(id_usuario), 0) + 1 FROM usuario;", mostrar_error=False)
-    nuevo_id = fila_id[0][0] if fila_id else 1
-
+    # E10 / E22: Inserción directa con AUTO_INCREMENT y captura precisa de errores
     sql = """
-        INSERT INTO usuario (id_usuario, cedula, nombre, apellido, correo, telefono, rol)
-        VALUES (%s, %s, %s, %s, %s, %s, 'Cliente');
+        INSERT INTO usuario (cedula, nombre, apellido, correo, telefono, rol)
+        VALUES (%s, %s, %s, %s, %s, 'Cliente');
     """
-    resultado = ejecutar(
-        sql,
-        (nuevo_id, cedula_int, nombre.strip(), apellido.strip(), correo_limpio, tel_limpio),
-        mostrar_error=False
-    )
+    filas, error = ejecutar_seguro(sql, (cedula_int, nom, ape, correo_limpio, tel_limpio))
+    if error is not None:
+        return False, traducir_error(error)
 
-    if resultado is None:
-        sql_auto = """
-            INSERT INTO usuario (cedula, nombre, apellido, correo, telefono, rol)
-            VALUES (%s, %s, %s, %s, %s, 'Cliente');
-        """
-        resultado = ejecutar(
-            sql_auto,
-            (cedula_int, nombre.strip(), apellido.strip(), correo_limpio, tel_limpio),
-            mostrar_error=False
-        )
-
-    if resultado is not None:
+    if filas:
+        res_id = consultar("SELECT id_usuario FROM usuario WHERE cedula = %s;", (cedula_int,), mostrar_error=False)
+        nuevo_id = res_id[0][0] if res_id else "Registrado"
         return True, nuevo_id
     else:
         return False, "No se pudo registrar el cliente en la base de datos."
@@ -178,7 +172,7 @@ def listar_clientes_db(busqueda=""):
 
 
 def crear_tabla(padre, columnas, anchos=None, alto=12):
-    """Crea un Treeview ttk estilizado con barra de desplazamiento vertical."""
+    """Crea un Treeview ttk estilizado con barras de desplazamiento vertical y horizontal (E13)."""
     marco = ttk.Frame(padre)
     ids = [f"c{i}" for i in range(len(columnas))]
     tabla = ttk.Treeview(marco, columns=ids, show="headings", height=alto)
@@ -186,13 +180,17 @@ def crear_tabla(padre, columnas, anchos=None, alto=12):
     for i, titulo in enumerate(columnas):
         ancho = anchos[i] if anchos else 120
         tabla.heading(ids[i], text=titulo)
-        tabla.column(ids[i], width=ancho, minwidth=50, anchor="center")
+        tabla.column(ids[i], width=ancho, minwidth=50, anchor="center", stretch=False)
 
-    barra = ttk.Scrollbar(marco, orient="vertical", command=tabla.yview)
-    tabla.configure(yscrollcommand=barra.set)
+    barra_v = ttk.Scrollbar(marco, orient="vertical", command=tabla.yview)
+    barra_h = ttk.Scrollbar(marco, orient="horizontal", command=tabla.xview)
+    tabla.configure(yscrollcommand=barra_v.set, xscrollcommand=barra_h.set)
 
-    tabla.pack(side="left", fill="both", expand=True)
-    barra.pack(side="right", fill="y")
+    tabla.grid(row=0, column=0, sticky="nsew")
+    barra_v.grid(row=0, column=1, sticky="ns")
+    barra_h.grid(row=1, column=0, sticky="ew")
+    marco.rowconfigure(0, weight=1)
+    marco.columnconfigure(0, weight=1)
     return marco, tabla
 
 
@@ -221,7 +219,7 @@ def abrir_dialogo_nuevo_cliente(padre, al_guardar_exitoso=None):
 
     estilo = ttk.Style(modal)
     estilo.configure("EncabezadoModal.TFrame", background="#1e3a5f")
-    estilo.configure("EncabezadoModal.TLabel", background="#1e3a5f", foreground="white", font=("Segoe UI", 11, "bold"))
+    estilo.configure("EncabezadoModal.TLabel", background="#1e3a5f", foreground="white", font=(FUENTE, 11, "bold"))
 
     enc = ttk.Frame(modal, style="EncabezadoModal.TFrame", padding=12)
     enc.pack(fill="x")
@@ -318,23 +316,23 @@ def crear_modulo_clientes(padre, al_modificar_clientes=None):
     marco_form = ttk.LabelFrame(izq, text="Registrar Nuevo Cliente", padding=12)
     marco_form.pack(fill="x")
 
-    ttk.Label(marco_form, text="Cédula:", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 2))
+    ttk.Label(marco_form, text="Cédula:", font=(FUENTE, 10, "bold")).pack(anchor="w", pady=(0, 2))
     ent_cedula = ttk.Entry(marco_form, width=30)
     ent_cedula.pack(fill="x", pady=(0, 8))
 
-    ttk.Label(marco_form, text="Nombre:", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 2))
+    ttk.Label(marco_form, text="Nombre:", font=(FUENTE, 10, "bold")).pack(anchor="w", pady=(0, 2))
     ent_nombre = ttk.Entry(marco_form, width=30)
     ent_nombre.pack(fill="x", pady=(0, 8))
 
-    ttk.Label(marco_form, text="Apellido:", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 2))
+    ttk.Label(marco_form, text="Apellido:", font=(FUENTE, 10, "bold")).pack(anchor="w", pady=(0, 2))
     ent_apellido = ttk.Entry(marco_form, width=30)
     ent_apellido.pack(fill="x", pady=(0, 8))
 
-    ttk.Label(marco_form, text="Correo Electrónico:", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 2))
+    ttk.Label(marco_form, text="Correo Electrónico:", font=(FUENTE, 10, "bold")).pack(anchor="w", pady=(0, 2))
     ent_correo = ttk.Entry(marco_form, width=30)
     ent_correo.pack(fill="x", pady=(0, 8))
 
-    ttk.Label(marco_form, text="Teléfono:", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 2))
+    ttk.Label(marco_form, text="Teléfono:", font=(FUENTE, 10, "bold")).pack(anchor="w", pady=(0, 2))
     ent_telefono = ttk.Entry(marco_form, width=30)
     ent_telefono.pack(fill="x", pady=(0, 12))
 
@@ -382,7 +380,7 @@ def crear_modulo_clientes(padre, al_modificar_clientes=None):
              "• Permite registrar clientes antes de la venta.\n"
              "• La eliminación verifica pedidos existentes.",
         foreground="#4a5568",
-        font=("Segoe UI", 9)
+        font=(FUENTE, 9)
     ).pack(anchor="w")
 
     # PANEL DERECHO: BÚSQUEDA Y TABLA
@@ -400,7 +398,7 @@ def crear_modulo_clientes(padre, al_modificar_clientes=None):
     ttk.Button(barra_busqueda, text="Buscar", command=lambda: cargar_clientes()).pack(side="left")
     ttk.Button(barra_busqueda, text="Limpiar Filtro", command=lambda: (ent_busqueda.delete(0, "end"), cargar_clientes())).pack(side="left", padx=5)
 
-    lbl_total = ttk.Label(barra_busqueda, text="Total: 0 cliente(s)", font=("Segoe UI", 9, "italic"), foreground="#5a6b7d")
+    lbl_total = ttk.Label(barra_busqueda, text="Total: 0 cliente(s)", font=(FUENTE, 9, "italic"), foreground="#5a6b7d")
     lbl_total.pack(side="right")
 
     # Tabla de clientes

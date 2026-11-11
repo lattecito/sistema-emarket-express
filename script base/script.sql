@@ -4,7 +4,7 @@
 -- SCRIPT SQL CONSOLIDADO (DDL, DML, TRIGGERS, PROCEDIMIENTOS, VISTAS Y ROLES)
 -- =============================================================================
 
--- E24: Garantiza el soporte correcto de tildes, eñes y caracteres especiales
+-- Configuración de codificación UTF-8 para soporte de tildes y caracteres especiales
 SET NAMES utf8mb4;
 
 DROP DATABASE IF EXISTS parcial;
@@ -15,7 +15,7 @@ USE parcial;
 -- 1. DDL: CREACIÓN DE TABLAS, RESTRICCIONES E ÍNDICES
 -- =============================================================================
 
--- 1.1 Tabla: usuario (Clientes y Cajeros del sistema)
+-- 1.1 Tabla: usuario (Administradores, Cajeros y Clientes del sistema)
 CREATE TABLE usuario (
     id_usuario INT(11) NOT NULL AUTO_INCREMENT,
     cedula INT(11) NOT NULL UNIQUE,
@@ -110,7 +110,7 @@ CREATE TABLE transaccion (
     PRIMARY KEY (id_transaccion),
     CONSTRAINT chk_cantidad_positiva CHECK (cantidad_vendida > 0),
     CONSTRAINT fk_transaccion_pedido FOREIGN KEY (pedido_transaccion) REFERENCES pedido(id_pedido) ON UPDATE CASCADE ON DELETE CASCADE,
-    -- E1: RESTRICT impide borrar productos que ya tienen ventas registradas en el historial
+    -- RESTRICT impide borrar productos que ya tienen ventas registradas en el historial
     CONSTRAINT fk_transaccion_producto FOREIGN KEY (producto_transaccion) REFERENCES productos(codigo) ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -138,8 +138,6 @@ CREATE TABLE auditoria_precio_articulo (
     usuario_bd VARCHAR(50) DEFAULT CURRENT_USER(),
     PRIMARY KEY (id_auditoria)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-
 
 
 -- =============================================================================
@@ -197,8 +195,7 @@ INSERT INTO bodega (id_bodega, nombre, ubicacion) VALUES
 (3, 'Bodega E-Market Satélite', 'Anillo Vial Km 2');
 
 -- Stock inicial en Bodegas
--- E4: La suma del stock de todas las bodegas coincide EXACTAMENTE con
---     productos.cantidad_disponible (inventario sincronizado).
+-- La suma del stock de todas las bodegas coincide con productos.cantidad_disponible.
 INSERT INTO inventario_bodega (id_articulo, id_bodega, stock_actual) VALUES 
 (1100, 1, 11),
 (1100, 2, 8),
@@ -229,8 +226,6 @@ INSERT INTO factura_pago (id_factura, id_pedido, metodo_pago, fecha_pago, valor_
 (1, 1, 'Tarjeta', '2026-01-26 10:15:00', 360000.00, 'Aprobado'),
 (2, 2, 'PSE', '2026-09-16 14:30:00', 435000.00, 'Aprobado'),
 (3, 3, 'Efectivo', '2026-08-11 09:00:00', 95000.00, 'Pendiente');
-
-
 
 
 -- =============================================================================
@@ -280,7 +275,7 @@ BEGIN
     END IF;
 END //
 
--- Trigger 3 (E4): Registrar en la Bodega 1 (predeterminada) el stock inicial de un producto nuevo
+-- Trigger 3: Registrar en la Bodega 1 (predeterminada) el stock inicial de un producto nuevo
 DROP TRIGGER IF EXISTS trg_stock_inicial_bodega //
 CREATE TRIGGER trg_stock_inicial_bodega
 AFTER INSERT ON productos
@@ -293,7 +288,7 @@ BEGIN
     END IF;
 END //
 
--- Trigger 4 (E4): Sincronizar inventario_bodega cada vez que cambie productos.cantidad_disponible
+-- Trigger 4: Sincronizar inventario_bodega cada vez que cambie productos.cantidad_disponible
 --   * Si el stock AUMENTA (devoluciones / reintegros / ajuste manual): se suma a la Bodega 1.
 --   * Si el stock DISMINUYE (ventas): se descuenta primero de la Bodega 1 y,
 --     si no alcanza, de las demás bodegas en orden ascendente.
@@ -371,7 +366,7 @@ BEGIN
         RESIGNAL;
     END;
 
-    -- E11: Validaciones estrictas de entrada antes de iniciar la transacción
+    -- Validaciones estrictas de entrada antes de iniciar la transacción
     IF p_cantidad IS NULL OR p_cantidad <= 0 THEN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Error: La cantidad a transferir debe ser un entero mayor que cero.';
     END IF;
@@ -483,11 +478,11 @@ BEGIN
 
         SELECT precio_unitario INTO v_precio FROM productos WHERE codigo = v_codigo;
 
-        -- E22: id_transaccion se genera con AUTO_INCREMENT (sin MAX()+1)
+        -- id_transaccion se genera automáticamente con AUTO_INCREMENT
         INSERT INTO transaccion (cantidad_vendida, precio_unitario_real, pedido_transaccion, producto_transaccion)
         VALUES (v_cantidad, v_precio, v_nuevo_pedido_id, v_codigo);
 
-        -- E4: el trigger trg_sincronizar_stock_bodega descuenta también de inventario_bodega (Bodega 1 primero)
+        -- El trigger trg_sincronizar_stock_bodega descuenta también de inventario_bodega (Bodega 1 primero)
         UPDATE productos 
         SET cantidad_disponible = cantidad_disponible - v_cantidad 
         WHERE codigo = v_codigo;
@@ -602,7 +597,7 @@ BEGIN
 
         SELECT precio_unitario INTO v_precio FROM productos WHERE codigo = v_codigo;
 
-        -- E22: id_transaccion se genera con AUTO_INCREMENT (sin MAX()+1)
+        -- id_transaccion se genera automáticamente con AUTO_INCREMENT
         INSERT INTO transaccion (cantidad_vendida, precio_unitario_real, pedido_transaccion, producto_transaccion)
         VALUES (v_cantidad, v_precio, p_id_pedido, v_codigo);
 
@@ -679,6 +674,7 @@ GRANT INSERT, UPDATE ON parcial.pedido TO 'Cajero_App';
 GRANT INSERT, DELETE ON parcial.transaccion TO 'Cajero_App';
 GRANT INSERT, UPDATE ON parcial.factura_pago TO 'Cajero_App';
 GRANT UPDATE ON parcial.productos TO 'Cajero_App';
+GRANT INSERT, UPDATE ON parcial.inventario_bodega TO 'Cajero_App';
 GRANT EXECUTE ON PROCEDURE parcial.SP_RegistrarPedidoCompleto TO 'Cajero_App';
 GRANT EXECUTE ON PROCEDURE parcial.SP_ModificarPedidoExistente TO 'Cajero_App';
 

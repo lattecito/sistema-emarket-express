@@ -25,6 +25,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from login import pedir_login
+from conexion import limpiar_sesion
+from estilos import FUENTE
 from catalogo import crear_modulo_catalogo
 from pedidos import crear_modulo_pedidos
 from reportes import crear_modulo_reportes
@@ -45,42 +47,42 @@ def aplicar_estilos_generales(ventana):
     estilo = ttk.Style(ventana)
     estilo.theme_use("clam")
 
-    # Fuentes y fondos base
-    estilo.configure(".", font=("Segoe UI", 10), background="#f4f6f9")
+    # Fuentes y fondos base (E25: familia multiplataforma desde estilos.py)
+    estilo.configure(".", font=(FUENTE, 10), background="#f4f6f9")
     estilo.configure("TFrame", background="#f4f6f9")
     estilo.configure("TLabel", background="#f4f6f9")
     estilo.configure("TLabelframe", background="#f4f6f9")
-    estilo.configure("TLabelframe.Label", background="#f4f6f9", foreground="#1e3a5f", font=("Segoe UI", 10, "bold"))
+    estilo.configure("TLabelframe.Label", background="#f4f6f9", foreground="#1e3a5f", font=(FUENTE, 10, "bold"))
 
     # Textos especiales
-    estilo.configure("Titulo.TLabel", font=("Segoe UI", 15, "bold"), foreground="#1e3a5f")
+    estilo.configure("Titulo.TLabel", font=(FUENTE, 15, "bold"), foreground="#1e3a5f")
     estilo.configure("Descripcion.TLabel", foreground="#5a6b7d")
-    estilo.configure("Total.TLabel", font=("Segoe UI", 15, "bold"), foreground="#27ae60")
+    estilo.configure("Total.TLabel", font=(FUENTE, 15, "bold"), foreground="#27ae60")
 
     # Barra superior (Encabezado)
     estilo.configure("Encabezado.TFrame", background="#1e3a5f")
-    estilo.configure("Encabezado.TLabel", background="#1e3a5f", foreground="white", font=("Segoe UI", 14, "bold"))
+    estilo.configure("Encabezado.TLabel", background="#1e3a5f", foreground="white", font=(FUENTE, 14, "bold"))
     estilo.configure("SubEncabezado.TLabel", background="#1e3a5f", foreground="#cfd8e3")
 
     # Botones con colores representativos
     estilo.configure("TButton", padding=(10, 5))
-    estilo.configure("Primario.TButton", background="#2e86de", foreground="white", font=("Segoe UI", 10, "bold"))
+    estilo.configure("Primario.TButton", background="#2e86de", foreground="white", font=(FUENTE, 10, "bold"))
     estilo.map("Primario.TButton", background=[("active", "#1b6fc2")])
 
-    estilo.configure("Exito.TButton", background="#27ae60", foreground="white", font=("Segoe UI", 10, "bold"))
+    estilo.configure("Exito.TButton", background="#27ae60", foreground="white", font=(FUENTE, 10, "bold"))
     estilo.map("Exito.TButton", background=[("active", "#1e8449")])
 
-    estilo.configure("Peligro.TButton", background="#c0392b", foreground="white", font=("Segoe UI", 10, "bold"))
+    estilo.configure("Peligro.TButton", background="#c0392b", foreground="white", font=(FUENTE, 10, "bold"))
     estilo.map("Peligro.TButton", background=[("active", "#922b21")])
 
     # Tablas (Treeview)
     estilo.configure("Treeview", rowheight=26, background="white", fieldbackground="white")
-    estilo.configure("Treeview.Heading", background="#1e3a5f", foreground="white", font=("Segoe UI", 10, "bold"), padding=5)
+    estilo.configure("Treeview.Heading", background="#1e3a5f", foreground="white", font=(FUENTE, 10, "bold"), padding=5)
     estilo.map("Treeview.Heading", background=[("active", "#2e86de")])
 
     # Pestañas (Notebook)
     estilo.configure("TNotebook", background="#f4f6f9", borderwidth=0)
-    estilo.configure("TNotebook.Tab", padding=(16, 7), font=("Segoe UI", 10, "bold"))
+    estilo.configure("TNotebook.Tab", padding=(16, 7), font=(FUENTE, 10, "bold"))
     estilo.map("TNotebook.Tab", background=[("selected", "white")], foreground=[("selected", "#1e3a5f")])
 
 
@@ -111,6 +113,7 @@ def abrir_ventana_principal(usuario):
 
     def accion_cerrar_sesion():
         if messagebox.askyesno("Cerrar Sesión", "¿Estás seguro de que deseas cerrar la sesión actual?"):
+            limpiar_sesion()
             resultado["cerrar_sesion"] = True
             ventana.destroy()
 
@@ -119,6 +122,8 @@ def abrir_ventana_principal(usuario):
     # 2. Contenedor de pestañas (Notebook) para la navegación entre módulos
     menu_navegacion = ttk.Notebook(ventana)
     menu_navegacion.pack(fill="both", expand=True, padx=10, pady=10)
+
+    recargadores = {}
 
     if es_administrador:
         # VISTA ADMINISTRADOR: Acceso completo a todos los módulos operativos y gerenciales
@@ -135,12 +140,12 @@ def abrir_ventana_principal(usuario):
         # 3. Módulo Transaccional de Pedidos y Pagos
         marco_pedidos = ttk.Frame(menu_navegacion)
         menu_navegacion.add(marco_pedidos, text="Pedidos y Transacciones")
-        crear_modulo_pedidos(marco_pedidos)
+        recargadores[str(marco_pedidos)] = crear_modulo_pedidos(marco_pedidos)
 
         # 4. Reportes Gerenciales y Gráficos Estadísticos (Exclusivo Administrador)
         marco_reportes = ttk.Frame(menu_navegacion)
         menu_navegacion.add(marco_reportes, text="Reportes Gerenciales y Gráficos")
-        crear_modulo_reportes(marco_reportes)
+        recargadores[str(marco_reportes)] = crear_modulo_reportes(marco_reportes)
 
         # 5. Gestión de Cajeros (Exclusivo Administrador)
         marco_cajeros = ttk.Frame(menu_navegacion)
@@ -151,11 +156,11 @@ def abrir_ventana_principal(usuario):
         # VISTA CAJERO:
         # Acceso exclusivo a operaciones de venta, consulta de existencias y clientes.
         # Las pestañas de administración (Gestión de Cajeros y Reportes) NO se agregan ni se instancian.
-        
+
         # 1. Pedidos y Transacciones (Venta) - Pestaña predeterminada al inicio
         marco_pedidos = ttk.Frame(menu_navegacion)
         menu_navegacion.add(marco_pedidos, text="Pedidos y Transacciones")
-        crear_modulo_pedidos(marco_pedidos)
+        recargadores[str(marco_pedidos)] = crear_modulo_pedidos(marco_pedidos)
 
         # 2. Consulta de Catálogo (Solo Lectura)
         marco_catalogo = ttk.Frame(menu_navegacion)
@@ -166,6 +171,15 @@ def abrir_ventana_principal(usuario):
         marco_clientes = ttk.Frame(menu_navegacion)
         menu_navegacion.add(marco_clientes, text="Gestión de Clientes")
         crear_modulo_clientes(marco_clientes)
+
+    def al_cambiar_pestana(evento=None):
+        """E12 / E19: Recarga automáticamente los datos al entrar en Pedidos o Reportes."""
+        sel = menu_navegacion.select()
+        fn = recargadores.get(str(sel))
+        if callable(fn):
+            fn()
+
+    menu_navegacion.bind("<<NotebookTabChanged>>", al_cambiar_pestana)
 
     ventana.mainloop()
     return resultado["cerrar_sesion"]

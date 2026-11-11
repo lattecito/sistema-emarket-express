@@ -19,10 +19,8 @@ Requerimiento:
 import re
 import tkinter as tk
 from tkinter import ttk, messagebox
-# pyrefly: ignore[missing-import]
-from mysql.connector import Error
 
-from conexion import consultar, ejecutar, ejecutar_seguro, traducir_error
+from conexion import consultar, ejecutar_seguro, traducir_error
 from estilos import FUENTE
 
 # E15: Teléfono con 7 a 15 dígitos numéricos (opcionalmente con un '+' inicial)
@@ -202,31 +200,31 @@ def crear_modulo_cajeros(padre):
     marco_form = ttk.LabelFrame(izquierda, text="Registrar Nuevo Cajero", padding=14)
     marco_form.pack(fill="x")
 
-    ttk.Label(marco_form, text="Cédula:", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 2))
+    ttk.Label(marco_form, text="Cédula:", font=(FUENTE, 10, "bold")).pack(anchor="w", pady=(0, 2))
     ent_cedula = ttk.Entry(marco_form, width=32)
     ent_cedula.pack(fill="x", pady=(0, 8))
 
-    ttk.Label(marco_form, text="Nombre:", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 2))
+    ttk.Label(marco_form, text="Nombre:", font=(FUENTE, 10, "bold")).pack(anchor="w", pady=(0, 2))
     ent_nombre = ttk.Entry(marco_form, width=32)
     ent_nombre.pack(fill="x", pady=(0, 8))
 
-    ttk.Label(marco_form, text="Apellido:", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 2))
+    ttk.Label(marco_form, text="Apellido:", font=(FUENTE, 10, "bold")).pack(anchor="w", pady=(0, 2))
     ent_apellido = ttk.Entry(marco_form, width=32)
     ent_apellido.pack(fill="x", pady=(0, 8))
 
-    ttk.Label(marco_form, text="Correo Electrónico (Login):", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 2))
+    ttk.Label(marco_form, text="Correo Electrónico (Login):", font=(FUENTE, 10, "bold")).pack(anchor="w", pady=(0, 2))
     ent_correo = ttk.Entry(marco_form, width=32)
     ent_correo.pack(fill="x", pady=(0, 8))
 
-    ttk.Label(marco_form, text="Teléfono:", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 2))
+    ttk.Label(marco_form, text="Teléfono:", font=(FUENTE, 10, "bold")).pack(anchor="w", pady=(0, 2))
     ent_telefono = ttk.Entry(marco_form, width=32)
     ent_telefono.pack(fill="x", pady=(0, 8))
 
-    ttk.Label(marco_form, text="Contraseña:", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 2))
+    ttk.Label(marco_form, text="Contraseña:", font=(FUENTE, 10, "bold")).pack(anchor="w", pady=(0, 2))
     ent_clave = ttk.Entry(marco_form, width=32, show="•")
     ent_clave.pack(fill="x", pady=(0, 8))
 
-    ttk.Label(marco_form, text="Confirmar Contraseña:", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 2))
+    ttk.Label(marco_form, text="Confirmar Contraseña:", font=(FUENTE, 10, "bold")).pack(anchor="w", pady=(0, 2))
     ent_clave_conf = ttk.Entry(marco_form, width=32, show="•")
     ent_clave_conf.pack(fill="x", pady=(0, 6))
 
@@ -249,7 +247,7 @@ def crear_modulo_cajeros(padre):
         "• Conexión a MariaDB bajo rol seguro Cajero_App.\n"
         "• Sin acceso a reportes ni gestión de cajeros."
     )
-    ttk.Label(tarjeta_info, text=info_texto, foreground="#34495e", font=("Segoe UI", 9)).pack(anchor="w")
+    ttk.Label(tarjeta_info, text=info_texto, foreground="#34495e", font=(FUENTE, 9)).pack(anchor="w")
 
     # PANEL DERECHO: Lista de Cajeros
     marco_lista = ttk.LabelFrame(derecha, text="Cajeros Registrados (tabla usuario WHERE rol = 'Cajero')", padding=12)
@@ -262,7 +260,7 @@ def crear_modulo_cajeros(padre):
     ent_busq = ttk.Entry(barra_busq, width=25)
     ent_busq.pack(side="left", padx=(0, 6))
 
-    lbl_total_cajeros = ttk.Label(barra_busq, text="Total: 0 cajero(s)", font=("Segoe UI", 10, "italic"), foreground="#5a6b7d")
+    lbl_total_cajeros = ttk.Label(barra_busq, text="Total: 0 cajero(s)", font=(FUENTE, 10, "italic"), foreground="#5a6b7d")
     lbl_total_cajeros.pack(side="right", padx=5)
 
     marco_tabla, tabla_cajeros = crear_tabla(
