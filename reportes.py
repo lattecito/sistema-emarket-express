@@ -128,6 +128,39 @@ SQL_AUDITORIA_TRIGGER = """
     ORDER BY a.fecha_modificacion DESC
 """
 
+# 7. Clientes destacados usando JOIN + GROUP BY + HAVING (vista_clientes_frecuentes)
+SQL_VISTA_CLIENTES_FRECUENTES = """
+    SELECT id_usuario, cliente, total_pedidos, total_gastado
+    FROM vista_clientes_frecuentes
+    ORDER BY total_gastado DESC
+"""
+
+SQL_RESPALDO_CLIENTES_HAVING = """
+    SELECT u.id_usuario, CONCAT(u.nombre, ' ', u.apellido) AS cliente,
+           COUNT(p.id_pedido) AS total_pedidos,
+           SUM(p.total) AS total_gastado
+    FROM usuario u
+    INNER JOIN pedido p ON u.id_usuario = p.usuario_pedido
+    GROUP BY u.id_usuario, u.nombre, u.apellido
+    HAVING COUNT(p.id_pedido) >= 1 AND SUM(p.total) >= 100000
+    ORDER BY total_gastado DESC
+"""
+
+# 8. Productos con precio superior al promedio del catálogo usando subconsultas (vista_productos_sobre_promedio)
+SQL_VISTA_PRODUCTOS_SOBRE_PROMEDIO = """
+    SELECT codigo, nombre, precio_unitario, promedio_catalogo
+    FROM vista_productos_sobre_promedio
+    ORDER BY precio_unitario DESC
+"""
+
+SQL_RESPALDO_PRODUCTOS_SUBCONSULTA = """
+    SELECT p.codigo, p.nombre, p.precio_unitario,
+           (SELECT ROUND(AVG(precio_unitario), 2) FROM productos) AS promedio_catalogo
+    FROM productos p
+    WHERE p.precio_unitario > (SELECT AVG(precio_unitario) FROM productos)
+    ORDER BY p.precio_unitario DESC
+"""
+
 
 # =============================================================================
 #  CONSTRUCCIÓN DEL MÓDULO VISUAL
@@ -188,6 +221,26 @@ def crear_modulo_reportes(padre):
         SQL_AUDITORIA_TRIGGER
     ))
 
+    # Pestaña de clientes destacados (HAVING)
+    recargadores.append(crear_pestana_reporte(
+        cuaderno, "Clientes Destacados (HAVING)",
+        "Consulta la vista 'vista_clientes_frecuentes' (INNER JOIN + GROUP BY + HAVING total >= 100.000).",
+        ("ID Usuario", "Cliente", "Total Pedidos", "Total Gastado"),
+        (100, 260, 140, 160),
+        SQL_VISTA_CLIENTES_FRECUENTES,
+        sql_respaldo=SQL_RESPALDO_CLIENTES_HAVING
+    ))
+
+    # Pestaña de productos con precio sobre el promedio (Subconsulta)
+    recargadores.append(crear_pestana_reporte(
+        cuaderno, "Precios > Promedio (Subconsulta)",
+        "Consulta la vista 'vista_productos_sobre_promedio' (subconsultas escalares sobre AVG).",
+        ("Código", "Producto", "Precio Unitario", "Promedio Catálogo"),
+        (100, 260, 160, 160),
+        SQL_VISTA_PRODUCTOS_SOBRE_PROMEDIO,
+        sql_respaldo=SQL_RESPALDO_PRODUCTOS_SUBCONSULTA
+    ))
+
     # Pestaña de gráficos con matplotlib
     recargadores.append(crear_pestana_graficos(cuaderno))
 
@@ -212,7 +265,7 @@ def crear_modulo_reportes(padre):
     return recargar_reportes
 
 
-def crear_pestana_reporte(cuaderno, titulo, descripcion, columnas, anchos, sql):
+def crear_pestana_reporte(cuaderno, titulo, descripcion, columnas, anchos, sql, sql_respaldo=None):
     pestana = ttk.Frame(cuaderno, padding=15)
     cuaderno.add(pestana, text=titulo)
 
@@ -225,7 +278,13 @@ def crear_pestana_reporte(cuaderno, titulo, descripcion, columnas, anchos, sql):
     marco_tabla.pack(fill="both", expand=True)
 
     def recargar():
-        llenar_tabla(tabla, consultar(sql), usar_primera_columna_como_id=False)
+        if sql_respaldo:
+            filas = consultar(sql, mostrar_error=False)
+            if not filas:
+                filas = consultar(sql_respaldo)
+        else:
+            filas = consultar(sql)
+        llenar_tabla(tabla, filas, usar_primera_columna_como_id=False)
 
     ttk.Button(pestana, text="Recargar reporte", style="Primario.TButton", command=recargar).pack(anchor="e", pady=(10, 0))
     recargar()

@@ -3,19 +3,14 @@ login.py
 ========
 Módulo de Autenticación e Inicio de Sesión sobre MariaDB / MySQL.
 
-Cuentas configuradas en la base de datos MariaDB:
-- admin_db   (Clave: Admin2026*Seguro) -> Rol: Administrador
-- cajero_app (Clave: Cajero2026*App)   -> Rol: Cajero
-- root       (Sin clave por defecto)  -> Rol: Administrador
-
 ¿Cómo funciona este módulo?
-1. El usuario ingresa su cuenta y contraseña de MariaDB (o pulsa un acceso rápido).
-2. Se prueba la autenticación en tiempo real conectándose al servidor MySQL en el puerto 3306.
-3. Si la conexión es exitosa:
-   - Se identifica el rol asignado (Administrador o Cajero).
-   - Se configuran las credenciales en conexion.establecer_sesion(...) para que toda la
-     aplicación opere bajo los privilegios correspondientes de MariaDB.
-4. Si las credenciales fallan, se muestra el error de acceso denegado.
+1. El usuario ingresa su cuenta de MariaDB o su correo/cédula de la tabla 'usuario'.
+2. Se prueba primero si corresponde a una cuenta directa de MariaDB contra el servidor.
+3. De lo contrario, consulta la tabla 'usuario' usando las cuentas técnicas definidas
+   en variables de entorno / '.env' (sin credenciales maestras quemadas en el código)
+   y verifica el hash PBKDF2-SHA256 en tiempo constante.
+4. Si la autenticación es exitosa, activa la sesión con el rol correspondiente
+   (Administrador o Cajero) en conexion.establecer_sesion(...).
 """
 
 import tkinter as tk
@@ -23,6 +18,12 @@ from tkinter import ttk, messagebox
 
 from conexion import probar_conexion, establecer_sesion, consultar, limpiar_sesion
 from estilos import FUENTE
+from seguridad import (
+    demo_rapida_habilitada,
+    obtener_credencial_rol,
+    obtener_cuentas_validacion,
+    verificar_contrasena,
+)
 
 
 def centrar_ventana(ventana, ancho, alto):
@@ -43,7 +44,8 @@ def pedir_login():
     ventana.title("E-Market Express - Autenticación")
     ventana.resizable(False, False)
     ventana.configure(bg="#f4f6f9")
-    centrar_ventana(ventana, 460, 520)
+    mostrar_demo = demo_rapida_habilitada() and bool(obtener_cuentas_validacion())
+    centrar_ventana(ventana, 460, 520 if mostrar_demo else 390)
 
     # Estilos visuales con ttk
     estilo = ttk.Style(ventana)
@@ -92,24 +94,31 @@ def pedir_login():
         rol = "Cajero"
 
         # 2. Si no es conexión directa a MariaDB, validamos contra la tabla 'usuario'
+        #    usando las cuentas técnicas de entorno/.env y hash PBKDF2-SHA256.
         #    E14: SOLO se permite identificarse por correo electrónico o cédula (no por nombre).
+        sin_config_servicio = False
         if not exito_db:
-            for u_serv, p_serv in (("cajero_app", "Cajero2026*App"), ("admin_db", "Admin2026*Seguro"), ("root", "")):
+            cuentas_servicio = obtener_cuentas_validacion()
+            if not cuentas_servicio:
+                sin_config_servicio = True
+            for u_serv, p_serv in cuentas_servicio:
                 try:
                     establecer_sesion(u_serv, p_serv, "Cajero")
                     filas = consultar(
                         """
-                        SELECT id_usuario, cedula, nombre, apellido, correo, rol 
-                        FROM usuario 
+                        SELECT id_usuario, cedula, nombre, apellido, correo, rol, contrasena
+                        FROM usuario
                         WHERE (LOWER(correo) = %s OR CAST(cedula AS CHAR) = %s)
-                          AND contrasena = %s;
+                        LIMIT 1;
                         """,
-                        (usuario.lower(), usuario, contrasena),
+                        (usuario.lower(), usuario),
                         mostrar_error=False
                     )
                     if filas:
-                        es_usuario_registrado = True
-                        registro_usuario = filas[0]
+                        u_hash = filas[0][6]
+                        if verificar_contrasena(contrasena, u_hash):
+                            es_usuario_registrado = True
+                            registro_usuario = filas[0][:6]
                         break
                 except Exception:
                     continue
@@ -117,11 +126,19 @@ def pedir_login():
         if not exito_db and not es_usuario_registrado:
             # E14: No dejar privilegios residuales de la sesión de servicio usada para validar
             limpiar_sesion()
-            messagebox.showerror(
-                "Error de Autenticación",
-                f"No se pudo iniciar sesión con '{usuario}'.\n\n"
-                f"Verifica que el correo/cédula y la contraseña sean correctos."
-            )
+            if sin_config_servicio and ("@" in usuario or usuario.isdigit()):
+                messagebox.showerror(
+                    "Configuración Requerida",
+                    "No se encontraron credenciales de servicio en '.env' ni en variables de entorno\n"
+                    "para validar usuarios de la tabla 'usuario'.\n\n"
+                    "Configura '.env' (ver '.env.example') o ingresa directamente con tu usuario MariaDB."
+                )
+            else:
+                messagebox.showerror(
+                    "Error de Autenticación",
+                    f"No se pudo iniciar sesión con '{usuario}'.\n\n"
+                    f"Verifica que el correo/cédula y la contraseña sean correctos."
+                )
             return
 
         # 3. Determinación de rol y sesión según la autenticación
@@ -130,12 +147,17 @@ def pedir_login():
             nombre_display = f"{u_nom} {u_ape}"
             rol_detectado = str(u_rol).strip() if u_rol else "Cajero"
 
-            if rol_detectado == "Administrador":
-                rol = "Administrador"
-                establecer_sesion("admin_db", "Admin2026*Seguro", "Administrador")
-            elif rol_detectado == "Cajero":
-                rol = "Cajero"
-                establecer_sesion("cajero_app", "Cajero2026*App", "Cajero")
+            if rol_detectado in ("Administrador", "Cajero"):
+                u_bd, p_bd = obtener_credencial_rol(rol_detectado)
+                if not u_bd or not p_bd:
+                    limpiar_sesion()
+                    messagebox.showerror(
+                        "Configuración Incompleta",
+                        f"No hay credenciales técnicas configuradas en '.env' para el rol '{rol_detectado}'."
+                    )
+                    return
+                rol = rol_detectado
+                establecer_sesion(u_bd, p_bd, rol)
             else:
                 limpiar_sesion()
                 messagebox.showwarning(
@@ -175,29 +197,35 @@ def pedir_login():
     btn_login = ttk.Button(cuerpo, text="Iniciar Sesión", style="BotonLogin.TButton", command=autenticar)
     btn_login.pack(fill="x", ipady=4)
 
-    # Accesos directos (solo ayuda visual para la demo: rellenan los campos al pulsarlos)
-    marco_rapido = ttk.LabelFrame(cuerpo, text="Cuentas de demostración (Acceso rápido):", padding=10)
-    marco_rapido.pack(fill="x", pady=(20, 0))
+    # Accesos directos (solo visibles si ENABLE_DEMO_QUICK_LOGIN=1 en '.env', sin claves quemadas)
+    if mostrar_demo:
+        u_adm, p_adm = obtener_credencial_rol("Administrador")
+        u_caj, p_caj = obtener_credencial_rol("Cajero")
 
-    def cargar_cuenta(u, c):
-        entrada_usuario.delete(0, "end")
-        entrada_usuario.insert(0, u)
-        entrada_contrasena.delete(0, "end")
-        entrada_contrasena.insert(0, c)
+        marco_rapido = ttk.LabelFrame(cuerpo, text="Cuentas de demostración (Acceso rápido):", padding=10)
+        marco_rapido.pack(fill="x", pady=(20, 0))
 
-    btn_admin = ttk.Button(
-        marco_rapido,
-        text="Administrador (admin_db)",
-        command=lambda: cargar_cuenta("admin_db", "Admin2026*Seguro")
-    )
-    btn_admin.pack(fill="x", pady=2)
+        def cargar_cuenta(u, c):
+            entrada_usuario.delete(0, "end")
+            entrada_usuario.insert(0, u)
+            entrada_contrasena.delete(0, "end")
+            entrada_contrasena.insert(0, c)
 
-    btn_cajero = ttk.Button(
-        marco_rapido,
-        text="Cajero (cajero_app)",
-        command=lambda: cargar_cuenta("cajero_app", "Cajero2026*App")
-    )
-    btn_cajero.pack(fill="x", pady=2)
+        if u_adm and p_adm:
+            btn_admin = ttk.Button(
+                marco_rapido,
+                text=f"Administrador ({u_adm})",
+                command=lambda u=u_adm, p=p_adm: cargar_cuenta(u, p)
+            )
+            btn_admin.pack(fill="x", pady=2)
+
+        if u_caj and p_caj:
+            btn_cajero = ttk.Button(
+                marco_rapido,
+                text=f"Cajero ({u_caj})",
+                command=lambda u=u_caj, p=p_caj: cargar_cuenta(u, p)
+            )
+            btn_cajero.pack(fill="x", pady=2)
 
     # Atajos de teclado con tecla Enter
     entrada_usuario.bind("<Return>", lambda e: entrada_contrasena.focus())

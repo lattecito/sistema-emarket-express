@@ -20,18 +20,20 @@ from mysql.connector import Error
 # pyrefly: ignore[missing-import]
 from mysql.connector.constants import ClientFlag 
 from tkinter import messagebox
+from seguridad import obtener_config_bd
 
-# Parámetros del servidor MariaDB / MySQL
-DB_HOST = "localhost"
-DB_PORT = 3306
-DB_NAME = "parcial"
+# Parámetros del servidor MariaDB / MySQL (cargados desde .env / variables de entorno)
+_CFG_BD = obtener_config_bd()
+DB_HOST = _CFG_BD["host"]
+DB_PORT = _CFG_BD["port"]
+DB_NAME = _CFG_BD["database"]
 
 # Credenciales de la sesión activa en la aplicación
 # (Se establecen dinámicamente tras el inicio de sesión exitoso)
 SESION_ACTUAL = {
-    "user": "root",
-    "password": "",
-    "rol": "Administrador"
+    "user": None,
+    "password": None,
+    "rol": None
 }
 
 
@@ -231,9 +233,13 @@ def traducir_error(error):
 
 
 if __name__ == "__main__":
+    from seguridad import obtener_credencial_rol
     exito, err = probar_conexion("root", "")
     print("Prueba root:", exito, err)
-    exito, err = probar_conexion("admin_db", "Admin2026*Seguro")
-    print("Prueba admin_db:", exito, err)
-    exito, err = probar_conexion("cajero_app", "Cajero2026*App")
-    print("Prueba cajero_app:", exito, err)
+    for rol_prueba in ("Administrador", "Cajero"):
+        u, p = obtener_credencial_rol(rol_prueba)
+        if u and p:
+            exito, err = probar_conexion(u, p)
+            print(f"Prueba {u}:", exito, err)
+        else:
+            print(f"Prueba {rol_prueba}: credenciales no configuradas en '.env'.")

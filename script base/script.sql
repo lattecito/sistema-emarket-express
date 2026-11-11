@@ -23,7 +23,7 @@ CREATE TABLE usuario (
     apellido VARCHAR(50) NOT NULL,
     correo VARCHAR(50) NOT NULL UNIQUE,
     telefono VARCHAR(20) NOT NULL,
-    contrasena VARCHAR(100) DEFAULT NULL,
+    contrasena VARCHAR(255) DEFAULT NULL,
     rol ENUM('Administrador', 'Cajero', 'Cliente') NOT NULL DEFAULT 'Cliente',
     PRIMARY KEY (id_usuario),
     INDEX idx_usuario_correo (correo)
@@ -168,14 +168,15 @@ INSERT INTO proveedor (nit, nombre, contacto, ciudad) VALUES
 ('800456789-3', 'Cosméticos & Salud Natural', '3157774411', 'Medellín'),
 ('879463208-6', 'Laboratorios Funat', '3116521452', 'Bogotá');
 
--- Usuarios (Clientes y Cajeros de prueba)
+-- Usuarios (Clientes y Cajeros de prueba con contraseñas protegidas mediante PBKDF2-SHA256)
+-- Nota de demostración: el cajero #5 ('cajero1@emarket.com') corresponde a la clave 'Cajero2026*App' y los clientes a '123456'.
 INSERT INTO usuario (id_usuario, cedula, nombre, apellido, correo, telefono, contrasena, rol) VALUES 
-(1, 112305, 'Juan', 'Gómez', 'gomezjuan@gmail.com', '30023520', '123456', 'Cliente'),
-(2, 102530, 'Nicolle', 'Prada', 'nicolleprada@gmail.com', '32106549', '123456', 'Cliente'),
-(3, 335164, 'Martín', 'Berdugo', 'berdugomartin@gmail.com', '31259878', '123456', 'Cliente'),
-(4, 351204, 'Nicolás', 'Ortiz', 'nicoortiz@gmail.com', '30012547', '123456', 'Cliente'),
-(5, 1009876, 'Carlos', 'Cajero', 'cajero1@emarket.com', '3115559988', 'Cajero2026*App', 'Cajero'),
-(6, 11225222, 'alejo', 'flor', 'floralejo@gmal.cm', '31256234', '123456', 'Cliente');
+(1, 112305, 'Juan', 'Gómez', 'gomezjuan@gmail.com', '30023520', 'pbkdf2_sha256$120000$UeZmqlyVoshJPBRu4pea3Q$_4201SblVZ9-IE7r7MWr9OVFBZ8dKO5U5etq7Vmvfo0', 'Cliente'),
+(2, 102530, 'Nicolle', 'Prada', 'nicolleprada@gmail.com', '32106549', 'pbkdf2_sha256$120000$_xvrX07jeaoIduHtNQ0eDQ$tqn2xoyABCySvi9CECB-UXUsHYC7eg9h9BORSXbWqv0', 'Cliente'),
+(3, 335164, 'Martín', 'Berdugo', 'berdugomartin@gmail.com', '31259878', 'pbkdf2_sha256$120000$hJJMruKggJHbfaQ7XwAKNA$QnD30HpbsQk0JBEJLLY0F9aJ9LL4ThEkM8-aACf8qkE', 'Cliente'),
+(4, 351204, 'Nicolás', 'Ortiz', 'nicoortiz@gmail.com', '30012547', 'pbkdf2_sha256$120000$3YPEaCf2pOsKpYaoZ2DfGA$zbtum-1zA2XuBfhbeHgb9CYCu86fZKDwkr7E8uy8uok', 'Cliente'),
+(5, 1009876, 'Carlos', 'Cajero', 'cajero1@emarket.com', '3115559988', 'pbkdf2_sha256$120000$rH7K2RIkHLaFM4GFaeg1BA$icNbsvCyESkm2cJXnTHihOCqHcre1k_FQ-4-AknqLiE', 'Cajero'),
+(6, 11225222, 'alejo', 'flor', 'floralejo@gmal.cm', '31256234', 'pbkdf2_sha256$120000$XsqN5qusQQ20U8VCFTK3nw$cZ5rO15CStT0plXGggBGURtP9KIB6x1qzJ-LNucFN4o', 'Cliente');
 
 -- Productos
 INSERT INTO productos (codigo, nombre, precio_unitario, cantidad_disponible, id_categoria, nit_proveedor) VALUES 
@@ -656,29 +657,33 @@ FROM pedido p
 INNER JOIN usuario u ON p.usuario_pedido = u.id_usuario
 LEFT JOIN factura_pago f ON p.id_pedido = f.id_pedido;
 
+CREATE OR REPLACE VIEW vista_clientes_frecuentes AS
+SELECT u.id_usuario, CONCAT(u.nombre, ' ', u.apellido) AS cliente,
+       COUNT(p.id_pedido) AS total_pedidos,
+       SUM(p.total) AS total_gastado
+FROM usuario u
+INNER JOIN pedido p ON u.id_usuario = p.usuario_pedido
+GROUP BY u.id_usuario, u.nombre, u.apellido
+HAVING COUNT(p.id_pedido) >= 1 AND SUM(p.total) >= 100000;
+
+CREATE OR REPLACE VIEW vista_productos_sobre_promedio AS
+SELECT p.codigo, p.nombre, p.precio_unitario,
+       (SELECT ROUND(AVG(precio_unitario), 2) FROM productos) AS promedio_catalogo
+FROM productos p
+WHERE p.precio_unitario > (SELECT AVG(precio_unitario) FROM productos);
 
 -- =============================================================================
--- 6. SEGURIDAD: CREACIÓN DE ROLES, USUARIOS Y ASIGNACIÓN DE PRIVILEGIOS
+-- 6. SEGURIDAD: ROLES, MÍNIMO PRIVILEGIO (GRANT / REVOKE) Y USUARIOS
 -- =============================================================================
 
--- 6.1 Creación de roles
-CREATE ROLE IF NOT EXISTS 'Administrador_DB';
-CREATE ROLE IF NOT EXISTS 'Cajero_App';
+-- 6.1 Recreación limpia de roles para garantizar ausencia de privilegios heredados
+DROP ROLE IF EXISTS 'Administrador_DB';
+DROP ROLE IF EXISTS 'Cajero_App';
 
--- 6.2 Asignación de privilegios a los roles
-GRANT ALL PRIVILEGES ON parcial.* TO 'Administrador_DB';
+CREATE ROLE 'Administrador_DB';
+CREATE ROLE 'Cajero_App';
 
-GRANT SELECT ON parcial.* TO 'Cajero_App';
-GRANT INSERT, UPDATE, DELETE ON parcial.usuario TO 'Cajero_App';
-GRANT INSERT, UPDATE ON parcial.pedido TO 'Cajero_App';
-GRANT INSERT, DELETE ON parcial.transaccion TO 'Cajero_App';
-GRANT INSERT, UPDATE ON parcial.factura_pago TO 'Cajero_App';
-GRANT UPDATE ON parcial.productos TO 'Cajero_App';
-GRANT INSERT, UPDATE ON parcial.inventario_bodega TO 'Cajero_App';
-GRANT EXECUTE ON PROCEDURE parcial.SP_RegistrarPedidoCompleto TO 'Cajero_App';
-GRANT EXECUTE ON PROCEDURE parcial.SP_ModificarPedidoExistente TO 'Cajero_App';
-
--- 6.3 Creación de usuarios de conexión
+-- 6.2 Creación de usuarios de conexión
 CREATE USER IF NOT EXISTS 'admin_db'@'localhost' IDENTIFIED BY 'Admin2026*Seguro';
 CREATE USER IF NOT EXISTS 'admin_db'@'127.0.0.1' IDENTIFIED BY 'Admin2026*Seguro';
 CREATE USER IF NOT EXISTS 'admin_db'@'%' IDENTIFIED BY 'Admin2026*Seguro';
@@ -687,15 +692,68 @@ CREATE USER IF NOT EXISTS 'cajero_app'@'localhost' IDENTIFIED BY 'Cajero2026*App
 CREATE USER IF NOT EXISTS 'cajero_app'@'127.0.0.1' IDENTIFIED BY 'Cajero2026*App';
 CREATE USER IF NOT EXISTS 'cajero_app'@'%' IDENTIFIED BY 'Cajero2026*App';
 
--- 6.4 Concesión de roles y privilegios a los usuarios
+-- 6.3 Limpieza previa de privilegios directos mediante REVOKE (idempotente)
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'admin_db'@'localhost', 'admin_db'@'127.0.0.1', 'admin_db'@'%';
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'cajero_app'@'localhost', 'cajero_app'@'127.0.0.1', 'cajero_app'@'%';
+
+-- 6.4 Privilegios del rol Administrador_DB (acotado al esquema parcial)
+GRANT ALL PRIVILEGES ON parcial.* TO 'Administrador_DB';
+
+-- 6.5 Privilegios de MÍNIMO PRIVILEGIO para el rol Cajero_App
+-- Lectura estricta solo sobre tablas operativas de caja y catálogo (excluye auditoria_precio_articulo y vistas gerenciales)
+GRANT SELECT ON parcial.usuario TO 'Cajero_App';
+GRANT SELECT ON parcial.estado TO 'Cajero_App';
+GRANT SELECT ON parcial.categoria TO 'Cajero_App';
+GRANT SELECT ON parcial.proveedor TO 'Cajero_App';
+GRANT SELECT ON parcial.bodega TO 'Cajero_App';
+GRANT SELECT ON parcial.inventario_bodega TO 'Cajero_App';
+GRANT SELECT ON parcial.productos TO 'Cajero_App';
+GRANT SELECT ON parcial.pedido TO 'Cajero_App';
+GRANT SELECT ON parcial.transaccion TO 'Cajero_App';
+GRANT SELECT ON parcial.factura_pago TO 'Cajero_App';
+GRANT SELECT ON parcial.vista_pedidos_resumen TO 'Cajero_App';
+
+-- Escritura acotada a clientes y punto de venta, con endurecimiento explícito vía REVOKE
+GRANT INSERT, UPDATE, DELETE ON parcial.usuario TO 'Cajero_App';
+-- El cajero puede registrar y consultar clientes, pero no alterar roles/contraseñas de cuentas existentes
+REVOKE UPDATE ON parcial.usuario FROM 'Cajero_App';
+
+GRANT INSERT, UPDATE, DELETE ON parcial.pedido TO 'Cajero_App';
+-- El cajero nunca puede eliminar pedidos históricos (solo registrar y actualizar estado)
+REVOKE DELETE ON parcial.pedido FROM 'Cajero_App';
+
+GRANT INSERT, DELETE ON parcial.transaccion TO 'Cajero_App';
+
+GRANT INSERT, UPDATE, DELETE ON parcial.factura_pago TO 'Cajero_App';
+-- El cajero nunca puede borrar facturas emitidas
+REVOKE DELETE ON parcial.factura_pago FROM 'Cajero_App';
+
+-- Mínimo privilegio por columna sobre productos:
+-- Se revoca INSERT/UPDATE/DELETE general para evitar cambios de precios o borrados,
+-- conservando únicamente SELECT y UPDATE sobre cantidad_disponible.
+GRANT INSERT, UPDATE, DELETE ON parcial.productos TO 'Cajero_App';
+REVOKE INSERT, UPDATE, DELETE ON parcial.productos FROM 'Cajero_App';
+GRANT UPDATE (cantidad_disponible) ON parcial.productos TO 'Cajero_App';
+
+-- Ejecución restringida únicamente a los procedimientos transaccionales de venta
+-- (se excluye SP_ActualizarInventarioBodega y tablas maestras/auditoría)
+GRANT EXECUTE ON PROCEDURE parcial.SP_RegistrarPedidoCompleto TO 'Cajero_App';
+GRANT EXECUTE ON PROCEDURE parcial.SP_ModificarPedidoExistente TO 'Cajero_App';
+
+-- 6.6 Concesión de roles y permisos de administración de respaldo a admin_db
 GRANT 'Administrador_DB' TO 'admin_db'@'localhost', 'admin_db'@'127.0.0.1', 'admin_db'@'%';
 GRANT 'Cajero_App' TO 'cajero_app'@'localhost', 'cajero_app'@'127.0.0.1', 'cajero_app'@'%';
 
-GRANT ALL PRIVILEGES ON *.* TO 'admin_db'@'localhost' WITH GRANT OPTION;
-GRANT ALL PRIVILEGES ON *.* TO 'admin_db'@'127.0.0.1' WITH GRANT OPTION;
-GRANT ALL PRIVILEGES ON *.* TO 'admin_db'@'%' WITH GRANT OPTION;
+-- Mínimo privilegio global para admin_db: control total sobre 'parcial.*' y permisos de monitoreo/respaldo,
+-- sin otorgar permisos destructivos sobre tablas del sistema mysql.*
+GRANT ALL PRIVILEGES ON parcial.* TO 'admin_db'@'localhost' WITH GRANT OPTION;
+GRANT ALL PRIVILEGES ON parcial.* TO 'admin_db'@'127.0.0.1' WITH GRANT OPTION;
+GRANT ALL PRIVILEGES ON parcial.* TO 'admin_db'@'%' WITH GRANT OPTION;
+GRANT PROCESS, RELOAD, SHOW DATABASES ON *.* TO 'admin_db'@'localhost';
+GRANT PROCESS, RELOAD, SHOW DATABASES ON *.* TO 'admin_db'@'127.0.0.1';
+GRANT PROCESS, RELOAD, SHOW DATABASES ON *.* TO 'admin_db'@'%';
 
--- 6.5 Activación automática de roles al iniciar sesión
+-- 6.7 Activación automática de roles al iniciar sesión
 SET DEFAULT ROLE 'Administrador_DB' FOR 'admin_db'@'localhost';
 SET DEFAULT ROLE 'Administrador_DB' FOR 'admin_db'@'127.0.0.1';
 SET DEFAULT ROLE 'Administrador_DB' FOR 'admin_db'@'%';
@@ -705,3 +763,33 @@ SET DEFAULT ROLE 'Cajero_App' FOR 'cajero_app'@'127.0.0.1';
 SET DEFAULT ROLE 'Cajero_App' FOR 'cajero_app'@'%';
 
 FLUSH PRIVILEGES;
+
+
+-- =============================================================================
+-- 7. AUDITORÍA DE PRIVILEGIOS Y POLÍTICA DE BACKUP / RESTORE
+-- =============================================================================
+
+-- Verificación inmediata de privilegios efectivos asignados a cada rol
+SHOW GRANTS FOR 'Administrador_DB';
+SHOW GRANTS FOR 'Cajero_App';
+
+/*
+  POLÍTICA Y COMANDOS OFICIALES DE RESPALDO Y RECUPERACIÓN (MariaDB / XAMPP):
+  También disponible de forma automatizada en: script base/backup_restore.bat
+
+  1. BACKUP COMPLETO (esquema, datos, vistas, triggers, procedimientos y eventos):
+     "C:\xampp\mysql\bin\mysqldump.exe" --host=localhost --port=3306 --user=root ^
+       --single-transaction --routines --triggers --events --add-drop-database ^
+       --databases parcial --default-character-set=utf8mb4 ^
+       --result-file="script base\backups\backup_parcial_YYYYMMDD_HHMMSS.sql"
+
+  2. BACKUP SOLO ESTRUCTURA (DDL + rutinas + triggers, sin datos):
+     "C:\xampp\mysql\bin\mysqldump.exe" --host=localhost --port=3306 --user=root ^
+       --no-data --routines --triggers --events --add-drop-database ^
+       --databases parcial --default-character-set=utf8mb4 ^
+       --result-file="script base\backups\estructura_parcial_YYYYMMDD_HHMMSS.sql"
+
+  3. RESTORE (recuperación total desde archivo .sql):
+     "C:\xampp\mysql\bin\mysql.exe" --host=localhost --port=3306 --user=root ^
+       --default-character-set=utf8mb4 < "script base\backups\backup_parcial_YYYYMMDD_HHMMSS.sql"
+*/

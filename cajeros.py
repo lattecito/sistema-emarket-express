@@ -22,6 +22,7 @@ from tkinter import ttk, messagebox
 
 from conexion import consultar, ejecutar_seguro, traducir_error
 from estilos import FUENTE
+from seguridad import hashear_contrasena
 
 # E15: Teléfono con 7 a 15 dígitos numéricos (opcionalmente con un '+' inicial)
 PATRON_TELEFONO = re.compile(r"^\+?\d{7,15}$")
@@ -102,12 +103,13 @@ def crear_cajero_db(cedula, nombre, apellido, correo, telefono, contrasena):
     if existe_cor:
         return False, f"Ya existe un usuario o cajero registrado con el correo '{correo_limpio}'."
 
-    # Inserción en la tabla usuario con rol = 'Cajero' (id_usuario es AUTO_INCREMENT - E22)
+    # Inserción en la tabla usuario con rol = 'Cajero' y contraseña protegida con PBKDF2-SHA256 (E22)
+    contrasena_segura = hashear_contrasena(contrasena)
     sql = """
         INSERT INTO usuario (cedula, nombre, apellido, correo, telefono, contrasena, rol) 
         VALUES (%s, %s, %s, %s, %s, %s, 'Cajero');
     """
-    res, error = ejecutar_seguro(sql, (cedula_int, nombre.strip(), apellido.strip(), correo_limpio, tel_limpio, contrasena))
+    res, error = ejecutar_seguro(sql, (cedula_int, nombre.strip(), apellido.strip(), correo_limpio, tel_limpio, contrasena_segura))
     if error is not None:
         return False, traducir_error(error)
     if res is not None:

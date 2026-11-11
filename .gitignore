@@ -13,8 +13,10 @@ ENV/
 .vscode/
 .idea/
 
-# Archivos de respaldo y temporales
+# Archivos de respaldo, entorno y temporales
 *.log
 *.tmp
+.env
 .DS_Store
 Thumbs.db
+script base/backups/
